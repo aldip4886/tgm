@@ -1,0 +1,3 @@
+# 0015: Dual-Display Aware Facilitator Controller and Pop-Out Projector View
+
+Presenters in training environments typically present on an external projector or screen-share while managing moderation, timers, and point adjustments privately on their primary screen. We decided to build a dual-display architecture consisting of a private Facilitator Dashboard (featuring split-screen presentation preview, activity state controls, response moderation, and attendee rosters) and an unencumbered "Projector View" pop-out window designed for external screens showing only presentation slides, live timers, and public responses. This prevents confidential facilitator administrative controls from being exposed to the training audience.

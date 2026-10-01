@@ -1,0 +1,3 @@
+# 0003: Facilitator-Projected Presentation with Decoupled Participant Interaction
+
+Canva presentations serve as the visual instructional content layer, but third-party embedding APIs lack multi-client synchronized slide control across disparate devices. We decided that the Canva presentation is exclusively controlled and displayed on the facilitator's device (for screen-sharing or room projection), while participant devices render only the interactive activities, prompts, synchronized timers, and whiteboards when triggered by the facilitator. This avoids brittle iframe synchronization, respects third-party embedding constraints, and ensures participant attention is focused on actionable collaboration.

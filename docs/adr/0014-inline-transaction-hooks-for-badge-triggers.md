@@ -1,0 +1,3 @@
+# 0014: Inline Transaction Hooks for Real-Time Badge Trigger Evaluation
+
+Gamified engagement in live learning depends on instantaneous reinforcement when milestones are achieved. We decided that rule-based automatic badges are evaluated immediately via inline transaction hooks whenever qualifying events (such as score updates, response submissions, or challenge completions) commit to the database, rather than deferring evaluation to end-of-session batches. This enables real-time client socket emissions with instant badge celebration animations on participant screens the exact moment criteria are met.

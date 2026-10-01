@@ -1,0 +1,3 @@
+# 0012: Configurable Activity Reveal Mode for Anti-Bias Moderation
+
+Different learning exercises require divergent peer visibility models: brainstorming thrives on instant cross-pollination of ideas, while problem-solving and quizzes require independent thought free from anchoring bias. We decided that activities support a configurable `revealMode` (`IMMEDIATE` vs `UPON_LOCK`), defaulting to `UPON_LOCK` where participants see only their own submission until the facilitator explicitly locks the activity for peer review and discussion. This equips facilitators with precise pedagogical pacing and prevents copy-pasting during critical challenges.

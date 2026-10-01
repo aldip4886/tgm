@@ -1,0 +1,3 @@
+# 0006: In-Memory Whiteboard Broadcast with Milestone Persistence
+
+Real-time Excalidraw whiteboards emit continuous streams of high-frequency vector updates that would degrade database performance if written synchronously. We decided that real-time drawing operations broadcast ephemerally in-memory through Socket.IO room channels, with the authoritative scene state persisted to PostgreSQL only upon explicit milestone events (such as participant submission or facilitator freeze) and debounced intervals during active collaboration. This delivers sub-50ms latency for drawing interactions while preventing database exhaustion during multi-team brainstorming exercises.

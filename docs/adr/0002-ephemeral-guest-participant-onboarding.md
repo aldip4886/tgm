@@ -1,0 +1,3 @@
+# 0002: Ephemeral Guest Participant Onboarding with Session Recovery
+
+Live classroom and distance training sessions require zero-friction entry where participants can join within seconds via QR code or session code without email registration or password creation. We decided to authenticate participants as ephemeral guest sessions identified by a session-scoped cryptographic token stored in client storage/cookies, rather than requiring formal user account registration. If a participant refreshes their browser or experiences network reconnection, their client presents the session token to re-attach transparently to their existing `SessionParticipant` record without losing state, points, or submitted responses.

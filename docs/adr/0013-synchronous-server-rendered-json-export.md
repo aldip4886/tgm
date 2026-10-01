@@ -1,0 +1,3 @@
+# 0013: Synchronous Server-Rendered JSON Stream Export
+
+Exporting complete session interaction datasets conforming to `schema_version: "1.0"` requires high fidelity across all relational entities and the event log. We decided to implement a direct, authenticated server endpoint (`GET /api/sessions/:id/export/json`) that formats and streams the versioned JSON payload synchronously upon facilitator request, rather than routing exports through asynchronous message queues and cloud storage buckets. For standard training cohorts (20 to 100 participants), streaming directly from PostgreSQL and Node.js executes in under 300ms, eliminating third-party storage dependencies and background worker complexity.

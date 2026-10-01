@@ -1,0 +1,3 @@
+# 0005: Strict Single-Active Linear Activity Lifecycle State Machine
+
+Training sessions require unambiguous focus and synchronization between the facilitator and participants. We decided to enforce a strict single-active activity model where only one activity can be active at a time in a session, progressing through a formal state machine (`DRAFT` → `ACTIVE` → `LOCKED` → `COMPLETED`), rather than permitting concurrent or multi-station activities. Activating any new activity automatically marks any prior open activity as `COMPLETED`, ensuring deterministic participant client views, simplified WebSocket room subscriptions, and clean aggregation of scores and event history.

@@ -1,0 +1,3 @@
+# 0009: Hybrid Canva Connect OAuth with Direct Presentation Link Fallback
+
+Canva presentation integration requires an official Canva Connect App for OAuth 2.0 flows, but third-party app verification and network environments may prevent immediate OAuth access. We decided to build a hybrid presentation integration model that supports official Canva Connect OAuth 2.0 when credentials exist in the environment, while providing a zero-dependency fallback where facilitators can paste a public Canva presentation URL and define slide-to-activity mappings directly. This guarantees unblocked local development and immediate deployment flexibility while remaining ready for official marketplace integration.

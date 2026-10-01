@@ -1,0 +1,3 @@
+# 0011: Append-Only Point Ledger with Materialized Score Caching
+
+Live gamified sessions generate high volumes of concurrent leaderboard requests alongside rapid point allocations across 6 distinct categories. We decided to store every point grant or deduction as an immutable row in an append-only `points` table, while simultaneously maintaining transactional materialized score totals directly on the `session_participants` and `teams` rows. This architecture enables instant $O(1)$ leaderboard sorting and ranking queries without on-the-fly SQL aggregation overhead, while ensuring an unalterable audit trail for downstream JSON dataset export.

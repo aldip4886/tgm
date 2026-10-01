@@ -1,0 +1,3 @@
+# 0001: Unified Custom Node Server with Next.js and Socket.IO
+
+The Training Game Management System requires both SSR/REST frontend capabilities and persistent, low-latency WebSocket connections for real-time timers, responses, and whiteboard collaboration. We decided to run a single Node.js process using a custom server (`server.ts`) hosting Next.js and an embedded Socket.IO instance in a unified Docker container, rather than maintaining decoupled frontend and backend services or relying on third-party serverless WebSocket providers. This eliminates cross-origin authentication complexity, enables direct memory-space event bridging between HTTP routes and socket rooms, and satisfies the MVP requirement to keep deployment simple and self-contained.

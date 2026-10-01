@@ -1,0 +1,223 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  name      String
+  role      String    @default("FACILITATOR") // FACILITATOR, ADMIN
+  createdAt DateTime  @default(now())
+  sessions  Session[]
+}
+
+model Session {
+  id                    String                 @id @default(uuid())
+  title                 String
+  description           String?
+  code                  String                 @unique // 6-character session code
+  status                String                 @default("ACTIVE") // WAITING, ACTIVE, COMPLETED
+  facilitatorId         String
+  facilitator           User                   @relation(fields: [facilitatorId], references: [id], onDelete: Cascade)
+  canvaPresentationUrl  String?
+  canvaSlideCount       Int?                   @default(0)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  participants          SessionParticipant[]
+  teams                 Team[]
+  activities            Activity[]
+  presentationMappings  PresentationMapping[]
+  points                Point[]
+  events                Event[]
+  participantBadges     ParticipantBadge[]
+}
+
+model PresentationMapping {
+  id          String   @id @default(uuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  slideNumber Int
+  title       String
+  checkpoint  String?
+  activityId  String?
+  createdAt   DateTime @default(now())
+}
+
+model SessionParticipant {
+  id              String             @id @default(uuid())
+  sessionId       String
+  session         Session            @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  displayName     String
+  token           String             @unique // Signed ephemeral recovery token
+  role            String             @default("PARTICIPANT") // PARTICIPANT, OBSERVER
+  peerPointBudget Int                @default(20)
+  totalPoints     Int                @default(0)
+  teamId          String?
+  team            Team?              @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  isConnected     Boolean            @default(true)
+  joinedAt        DateTime           @default(now())
+  responses       Response[]
+  comments        Comment[]
+  reactions       Reaction[]
+  pointsReceived  Point[]            @relation("RecipientPoints")
+  pointsGiven     Point[]            @relation("GiverPoints")
+  badges          ParticipantBadge[]
+  whiteboards     Whiteboard[]
+}
+
+model Team {
+  id           String               @id @default(uuid())
+  sessionId    String
+  session      Session              @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  name         String
+  totalPoints  Int                  @default(0)
+  createdAt    DateTime             @default(now())
+  members      SessionParticipant[]
+  responses    Response[]
+  points       Point[]
+  whiteboards  Whiteboard[]
+}
+
+model Activity {
+  id                String       @id @default(uuid())
+  sessionId         String
+  session           Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  title             String
+  prompt            String
+  type              String       @default("OPEN_QUESTION") // OPEN_QUESTION, STICKY_NOTE, CASE_STUDY, POLL, TEAM_CHALLENGE, WHITEBOARD
+  state             String       @default("DRAFT") // DRAFT, ACTIVE, LOCKED, COMPLETED
+  revealMode        String       @default("UPON_LOCK") // UPON_LOCK, IMMEDIATE
+  presentationSlide Int?
+  orderIndex        Int          @default(0)
+  timerSeconds      Int?
+  timerEndsAt       DateTime?
+  timerRemainingMs  Int?
+  timerStatus       String       @default("STOPPED") // STOPPED, RUNNING, PAUSED
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  responses         Response[]
+  points            Point[]
+  whiteboards       Whiteboard[]
+  events            Event[]
+}
+
+model Response {
+  id            String             @id @default(uuid())
+  activityId    String
+  activity      Activity           @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  participantId String
+  participant   SessionParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  teamId        String?
+  team          Team?              @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  content       String
+  color         String?            // for sticky notes
+  isHidden      Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  comments      Comment[]
+  reactions     Reaction[]
+  points        Point[]
+}
+
+model Comment {
+  id            String             @id @default(uuid())
+  responseId    String
+  response      Response           @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  participantId String
+  participant   SessionParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  content       String
+  parentId      String?
+  parent        Comment?           @relation("ThreadedComments", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       Comment[]          @relation("ThreadedComments")
+  isHidden      Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+}
+
+model Reaction {
+  id            String             @id @default(uuid())
+  responseId    String
+  response      Response           @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  participantId String
+  participant   SessionParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  type          String             @default("LIKE") // LIKE, HEART, CLAP, STAR
+  createdAt     DateTime           @default(now())
+
+  @@unique([responseId, participantId, type])
+}
+
+model Point {
+  id            String              @id @default(uuid())
+  sessionId     String
+  session       Session             @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participantId String?
+  participant   SessionParticipant? @relation("RecipientPoints", fields: [participantId], references: [id], onDelete: Cascade)
+  teamId        String?
+  team          Team?               @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  activityId    String?
+  activity      Activity?           @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  responseId    String?
+  response      Response?           @relation(fields: [responseId], references: [id], onDelete: SetNull)
+  category      String              // PARTICIPATION, PEER, CHALLENGE, FACILITATOR, TEAM, BONUS
+  amount        Int
+  giverId       String?
+  giver         SessionParticipant? @relation("GiverPoints", fields: [giverId], references: [id], onDelete: SetNull)
+  reason        String?
+  createdAt     DateTime            @default(now())
+}
+
+model Whiteboard {
+  id            String              @id @default(uuid())
+  activityId    String
+  activity      Activity            @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  participantId String?
+  participant   SessionParticipant? @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  teamId        String?
+  team          Team?               @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  sceneData     String              // JSON serialized Excalidraw elements & state
+  isSubmitted   Boolean             @default(false)
+  submittedAt   DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+}
+
+model Badge {
+  id          String             @id @default(uuid())
+  name        String             @unique
+  description String
+  icon        String
+  ruleType    String             // AUTOMATIC_POINTS, AUTOMATIC_RESPONSES, MANUAL
+  ruleValue   Int?
+  createdAt   DateTime           @default(now())
+  awards      ParticipantBadge[]
+}
+
+model ParticipantBadge {
+  id            String             @id @default(uuid())
+  sessionId     String
+  session       Session            @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participantId String
+  participant   SessionParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  badgeId       String
+  badge         Badge              @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  reason        String?
+  awardedBy     String             @default("SYSTEM") // SYSTEM or Facilitator ID
+  createdAt     DateTime           @default(now())
+}
+
+model Event {
+  id         String    @id @default(uuid())
+  sessionId  String
+  session    Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  activityId String?
+  activity   Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  actorId    String?
+  eventType  String    // e.g. SESSION_STARTED, RESPONSE_SUBMITTED, TIMER_COMPLETED
+  targetId   String?
+  metadata   String?   // JSON serialized payload
+  timestamp  DateTime  @default(now())
+}

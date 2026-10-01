@@ -1,0 +1,3 @@
+# 0007: Facilitator-Allocated Peer Point Budget Economy
+
+Allowing peer recognition without constraints leads to point inflation and reciprocal voting rings, whereas deducting peer rewards from a user's own score discourages positive feedback. We decided to implement a facilitator-configured Peer Point Budget, where participants receive a distinct point quota allocated per activity or session that can be gifted to high-quality peer responses without reducing their personal leaderboard standings. This cultivates selective, merit-based peer recognition while preserving individual competitive incentives.

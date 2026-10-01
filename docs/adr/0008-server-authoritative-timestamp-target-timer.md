@@ -1,0 +1,3 @@
+# 0008: Server-Authoritative Timestamp Target Timer Synchronization
+
+Digital countdown timers across distributed client devices are susceptible to network latency variance and background-tab clock throttling. We decided to make the server the single authority on absolute expiration timestamps (`endsAt` in UTC) and elapsed offsets when paused, allowing client browsers to render fluid 60fps countdowns via local `requestAnimationFrame` anchored to the target timestamp rather than broadcasting 1-second interval ticks. The server monitors its own internal timer expiration to authoritatively dispatch completion events and trigger automatic activity locks.

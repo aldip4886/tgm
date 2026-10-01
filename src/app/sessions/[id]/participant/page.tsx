@@ -6,6 +6,7 @@ import { getSocket } from "@/lib/socket-client";
 import { DigitalTimer } from "@/components/DigitalTimer";
 import { CollaborativeWhiteboard } from "@/components/CollaborativeWhiteboard";
 import { LeaderboardView } from "@/components/LeaderboardView";
+import { BadgeCelebrationModal } from "@/components/BadgeCelebrationModal";
 import {
   Sparkles,
   Users,
@@ -47,6 +48,10 @@ export default function ParticipantSessionView() {
   });
   const [leaderboardVisibility, setLeaderboardVisibility] = useState("HIDDEN");
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+
+  // Badges State
+  const [badges, setBadges] = useState<any[]>([]);
+  const [celebratingBadge, setCelebratingBadge] = useState<{ badge: any; reason?: string } | null>(null);
 
   useEffect(() => {
     async function initParticipant() {
@@ -97,11 +102,21 @@ export default function ParticipantSessionView() {
           if (lbData.visibility) setLeaderboardVisibility(lbData.visibility);
         }
 
+        // Fetch participant badges
+        loadBadges(partData.id);
+
         // Socket connection
         const socket = getSocket();
         socket.emit("session:join", {
           sessionId: id,
           participantId: partData.id,
+        });
+
+        socket.on("badge:celebrate", ({ participantId, badge, reason }: any) => {
+          if (participantId === partData.id) {
+            setCelebratingBadge({ badge, reason });
+            loadBadges(partData.id);
+          }
         });
 
         socket.on("activity:state_updated", ({ activity }: { activity: any }) => {
@@ -162,6 +177,7 @@ export default function ParticipantSessionView() {
 
         socket.on("leaderboard:scores_updated", () => {
           loadLeaderboard();
+          loadBadges(partData.id);
           fetch("/api/sessions/reconnect", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -183,6 +199,7 @@ export default function ParticipantSessionView() {
 
     return () => {
       const socket = getSocket();
+      socket.off("badge:celebrate");
       socket.off("activity:state_updated");
       socket.off("response:added");
       socket.off("team:roster_updated");
@@ -192,6 +209,18 @@ export default function ParticipantSessionView() {
       socket.off("leaderboard:scores_updated");
     };
   }, [id]);
+
+  const loadBadges = async (partId: string) => {
+    try {
+      const res = await fetch(`/api/participants/${partId}/badges`);
+      if (res.ok) {
+        const data = await res.json();
+        setBadges(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const loadLeaderboard = async () => {
     try {
@@ -263,6 +292,17 @@ export default function ParticipantSessionView() {
       // Notify room via socket
       const socket = getSocket();
       socket.emit("response:new", { sessionId: id, response });
+
+      if (response.newBadges && response.newBadges.length > 0) {
+        for (const b of response.newBadges) {
+          socket.emit("badge:award", {
+            sessionId: id,
+            participantId: b.participantId,
+            badge: b.badge,
+            reason: b.reason,
+          });
+        }
+      }
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -305,6 +345,19 @@ export default function ParticipantSessionView() {
       const data = await res.json();
       setParticipant((prev: any) => ({ ...prev, peerPointBudget: data.remainingBudget }));
       if (activeActivity) loadActivityResponses(activeActivity.id, token);
+      const socket = getSocket();
+      socket.emit("leaderboard:points_awarded", { sessionId: id });
+
+      if (data.newBadges && data.newBadges.length > 0) {
+        for (const b of data.newBadges) {
+          socket.emit("badge:award", {
+            sessionId: id,
+            participantId: b.participantId,
+            badge: b.badge,
+            reason: b.reason,
+          });
+        }
+      }
     } catch (err: any) {
       alert(err.message);
     }
@@ -386,6 +439,16 @@ export default function ParticipantSessionView() {
             <Award className="w-4 h-4 text-amber-600" />
             <span>{participant.totalPoints} pts</span>
           </div>
+
+          {badges.length > 0 && (
+            <div
+              className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-amber-50 to-yellow-50 text-amber-900 border border-amber-300 rounded-xl text-xs font-semibold cursor-pointer shadow-sm hover:brightness-95 transition"
+              title={badges.map((b) => b.badge?.name).join(", ")}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              <span>{badges.length} {badges.length === 1 ? "Badge" : "Badges"}</span>
+            </div>
+          )}
 
           <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-semibold">
             <Heart className="w-3.5 h-3.5 text-indigo-600" />
@@ -640,6 +703,14 @@ export default function ParticipantSessionView() {
           </div>
         )}
       </main>
+
+      {celebratingBadge && (
+        <BadgeCelebrationModal
+          badge={celebratingBadge.badge}
+          reason={celebratingBadge.reason}
+          onClose={() => setCelebratingBadge(null)}
+        />
+      )}
     </div>
   );
 }

@@ -105,6 +105,10 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
     socket.on("leaderboard:points_awarded", ({ sessionId }: { sessionId: string }) => {
       io?.to(`session:${sessionId}`).emit("leaderboard:scores_updated");
     });
+
+    socket.on("badge:award", ({ sessionId, participantId, badge, reason }: any) => {
+      io?.to(`session:${sessionId}`).emit("badge:celebrate", { participantId, badge, reason });
+    });
   });
 
   return io;

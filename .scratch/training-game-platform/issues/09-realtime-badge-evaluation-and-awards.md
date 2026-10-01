@@ -5,10 +5,10 @@ Automated badge triggers evaluate criteria (e.g. `total_points >= 100`, top cont
 
 **Blocked by:** 08: Multi-Category Scoring Engine & Live Leaderboards
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Automated badge rules evaluate during score and activity transaction hooks
-- [ ] Qualified participants receive a badge record and real-time celebratory popup on their device
-- [ ] Facilitator can view available badges and manually award a badge with a reason to any participant
-- [ ] Participant profile displays all earned digital badges and achievement dates
-- [ ] Badge awarding events are captured in the event log
+- [x] Automated badge rules evaluate during score and activity transaction hooks
+- [x] Qualified participants receive a badge record and real-time celebratory popup on their device
+- [x] Facilitator can view available badges and manually award a badge with a reason to any participant
+- [x] Participant profile displays all earned digital badges and achievement dates
+- [x] Badge awarding events are captured in the event log

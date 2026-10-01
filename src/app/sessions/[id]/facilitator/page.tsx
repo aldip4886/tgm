@@ -77,15 +77,29 @@ export default function FacilitatorDashboard() {
   const [awardCategory, setAwardCategory] = useState<string>("FACILITATOR");
   const [awardReason, setAwardReason] = useState<string>("");
 
+  // Badges State
+  const [availableBadges, setAvailableBadges] = useState<any[]>([]);
+  const [showBadgeModal, setShowBadgeModal] = useState(false);
+  const [badgeTargetParticipant, setBadgeTargetParticipant] = useState<string>("");
+  const [selectedBadgeId, setSelectedBadgeId] = useState<string>("");
+  const [badgeReason, setBadgeReason] = useState<string>("");
+
   useEffect(() => {
     async function fetchSessionData() {
       try {
-        const [resSession, resActivities, resTeams, resLb] = await Promise.all([
+        const [resSession, resActivities, resTeams, resLb, resBadges] = await Promise.all([
           fetch(`/api/sessions/${id}`),
           fetch(`/api/sessions/${id}/activities`),
           fetch(`/api/sessions/${id}/teams`),
           fetch(`/api/sessions/${id}/leaderboard`),
+          fetch(`/api/badges`),
         ]);
+
+        if (resBadges.ok) {
+          const bData = await resBadges.json();
+          setAvailableBadges(bData);
+          if (bData.length > 0) setSelectedBadgeId(bData[0].id);
+        }
 
         if (!resSession.ok) throw new Error("Failed to load session");
         const sessionData = await resSession.json();
@@ -234,16 +248,62 @@ export default function FacilitatorDashboard() {
         }),
       });
       if (res.ok) {
+        const pData = await res.json();
         setShowAwardModal(false);
         setAwardReason("");
         loadLeaderboard();
         const socket = getSocket();
         socket.emit("leaderboard:points_awarded", { sessionId: id });
+
+        if (pData.newBadges && pData.newBadges.length > 0) {
+          for (const b of pData.newBadges) {
+            socket.emit("badge:award", {
+              sessionId: id,
+              participantId: b.participantId,
+              badge: b.badge,
+              reason: b.reason,
+            });
+          }
+        }
+
         const sRes = await fetch(`/api/sessions/${id}`);
         if (sRes.ok) {
           const sData = await sRes.json();
           setParticipants(sData.participants || []);
         }
+      }
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleAwardBadge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!badgeTargetParticipant || !selectedBadgeId) return;
+    try {
+      const res = await fetch(`/api/participants/${badgeTargetParticipant}/badges`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          badgeId: selectedBadgeId,
+          reason: badgeReason,
+          awardedBy: "Facilitator",
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setShowBadgeModal(false);
+        setBadgeReason("");
+        const socket = getSocket();
+        socket.emit("badge:award", {
+          sessionId: id,
+          participantId: badgeTargetParticipant,
+          badge: data.badge,
+          reason: data.reason,
+        });
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to award badge");
       }
     } catch (err: any) {
       alert(err.message);
@@ -920,7 +980,19 @@ export default function FacilitatorDashboard() {
                       />
                       <span className="text-sm font-medium text-slate-800">{p.displayName}</span>
                     </div>
-                    <span className="text-xs text-slate-400 font-mono">{p.totalPoints} pts</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-400 font-mono">{p.totalPoints} pts</span>
+                      <button
+                        onClick={() => {
+                          setBadgeTargetParticipant(p.id);
+                          setShowBadgeModal(true);
+                        }}
+                        title="Award Badge"
+                        className="p-1 hover:bg-amber-50 rounded text-slate-400 hover:text-amber-600 transition"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1021,13 +1093,27 @@ export default function FacilitatorDashboard() {
                 <Trophy className="w-5 h-5 text-amber-500" />
                 <h2 className="text-base font-bold text-slate-800">Championship Standings</h2>
               </div>
-              <button
-                onClick={() => setShowAwardModal(true)}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
-              >
-                <Award className="w-3.5 h-3.5" />
-                Award Points
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowAwardModal(true)}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
+                >
+                  <Award className="w-3.5 h-3.5" />
+                  Award Points
+                </button>
+                <button
+                  onClick={() => {
+                    if (participants.length > 0 && !badgeTargetParticipant) {
+                      setBadgeTargetParticipant(participants[0].id);
+                    }
+                    setShowBadgeModal(true);
+                  }}
+                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Award Badge
+                </button>
+              </div>
             </div>
 
             {/* Visibility Settings Bar */}
@@ -1140,6 +1226,89 @@ export default function FacilitatorDashboard() {
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm"
                 >
                   Award Points
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Badge Award Modal */}
+      {showBadgeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-500" />
+                Award Facilitator Badge
+              </h3>
+              <button
+                onClick={() => setShowBadgeModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-semibold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAwardBadge} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Recipient Participant:</label>
+                <select
+                  required
+                  value={badgeTargetParticipant}
+                  onChange={(e) => setBadgeTargetParticipant(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                >
+                  <option value="">Select a participant...</option>
+                  {participants.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.displayName} {p.team ? `(${p.team.name})` : ""} - {p.totalPoints} pts
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Select Badge:</label>
+                <select
+                  required
+                  value={selectedBadgeId}
+                  onChange={(e) => setSelectedBadgeId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                >
+                  {availableBadges.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.ruleType === "MANUAL" ? "Facilitator Award" : "Automatic"}) - {b.description}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Citation / Reason:</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Exceptional teamwork during Case Study"
+                  value={badgeReason}
+                  onChange={(e) => setBadgeReason(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBadgeModal(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!badgeTargetParticipant || !selectedBadgeId}
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-600 hover:to-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm"
+                >
+                  Award Badge
                 </button>
               </div>
             </form>

@@ -1,4 +1,5 @@
 import { prisma } from "../lib/db";
+import { evaluateAutomaticBadges } from "./badge.service";
 
 export async function toggleReaction(
   responseId: string,
@@ -225,9 +226,12 @@ export async function awardPeerPoints(
       },
     });
 
+    const newBadges = await evaluateAutomaticBadges(tx, response.activity.sessionId, response.participantId);
+
     return {
       point,
       remainingBudget: updatedGiver.peerPointBudget,
+      newBadges,
     };
   });
 }

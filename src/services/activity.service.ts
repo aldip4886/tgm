@@ -1,4 +1,5 @@
 import { prisma } from "../lib/db";
+import { evaluateAutomaticBadges } from "./badge.service";
 
 export interface CreateActivityInput {
   title: string;
@@ -146,7 +147,12 @@ export async function submitResponse(
       },
     });
 
-    return response;
+    const newBadges = await evaluateAutomaticBadges(tx, activity.sessionId, participantId);
+
+    return {
+      ...response,
+      newBadges,
+    };
   });
 }
 

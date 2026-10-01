@@ -1,4 +1,5 @@
 import { prisma } from "../lib/db";
+import { evaluateAutomaticBadges } from "./badge.service";
 
 export type PointCategory =
   | "PARTICIPATION"
@@ -79,6 +80,11 @@ export async function awardPoints(input: AwardPointsInput) {
       },
     });
 
+    let newBadges: any[] = [];
+    if (participantId) {
+      newBadges = await evaluateAutomaticBadges(tx, sessionId, participantId);
+    }
+
     await tx.event.create({
       data: {
         sessionId,
@@ -92,11 +98,15 @@ export async function awardPoints(input: AwardPointsInput) {
           amount,
           category,
           reason,
+          newBadgesCount: newBadges.length,
         }),
       },
     });
 
-    return point;
+    return {
+      ...point,
+      newBadges,
+    };
   });
 }
 

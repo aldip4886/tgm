@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { getSocket } from "@/lib/socket-client";
 import { DigitalTimer } from "@/components/DigitalTimer";
+import { CollaborativeWhiteboard } from "@/components/CollaborativeWhiteboard";
 import { Presentation, Sparkles, QrCode } from "lucide-react";
 
 export default function ProjectorView() {
@@ -12,6 +13,7 @@ export default function ProjectorView() {
   const [currentSlide, setCurrentSlide] = useState(1);
   const [currentMapping, setCurrentMapping] = useState<any>(null);
   const [timerState, setTimerState] = useState<any>(null);
+  const [projectedWhiteboard, setProjectedWhiteboard] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -59,9 +61,26 @@ export default function ProjectorView() {
       });
     });
 
+    socket.on("whiteboard:projected", async ({ whiteboardId }: { whiteboardId: string }) => {
+      if (whiteboardId) {
+        try {
+          const res = await fetch(`/api/whiteboards/${whiteboardId}`);
+          if (res.ok) {
+            const data = await res.json();
+            setProjectedWhiteboard(data);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        setProjectedWhiteboard(null);
+      }
+    });
+
     return () => {
       socket.off("presentation:slide_updated");
       socket.off("timer:updated");
+      socket.off("whiteboard:projected");
     };
   }, [id]);
 
@@ -129,7 +148,30 @@ export default function ProjectorView() {
 
       {/* Main Projector Presentation Area */}
       <main className="flex-1 flex flex-col items-center justify-center p-6 relative">
-        {embedUrl ? (
+        {projectedWhiteboard ? (
+          <div className="w-full max-w-5xl bg-slate-900 rounded-3xl p-6 border border-slate-800 shadow-2xl flex flex-col items-center">
+            <div className="w-full flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <span className="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-xs font-semibold border border-indigo-500/30">
+                  Projected Whiteboard
+                </span>
+                <h3 className="text-xl font-bold text-white">
+                  {projectedWhiteboard.team?.name ||
+                    projectedWhiteboard.participant?.displayName ||
+                    "Collaborative Whiteboard"}
+                </h3>
+              </div>
+            </div>
+            <div className="w-full bg-white rounded-2xl overflow-hidden text-slate-900 shadow-inner">
+              <CollaborativeWhiteboard
+                whiteboardId={projectedWhiteboard.id}
+                sessionId={id}
+                readOnly={true}
+                initialSceneData={projectedWhiteboard.sceneData}
+              />
+            </div>
+          </div>
+        ) : embedUrl ? (
           <div className="w-full h-full max-h-[85vh] rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-black">
             <iframe
               src={embedUrl}

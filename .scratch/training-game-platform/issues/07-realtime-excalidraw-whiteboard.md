@@ -5,11 +5,11 @@ Participants and teams can launch collaborative digital whiteboards powered by E
 
 **Blocked by:** 03: Open Question Activity & Configurable Response Reveal, 06: Facilitator-Controlled Team Auto-Split & Team Challenges
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Facilitator can create a Whiteboard activity (individual, team, or whole-session)
-- [ ] Participants on the same board draw collaboratively via real-time Socket.IO room broadcasts
-- [ ] Whiteboard scene state (elements and app state) persists to PostgreSQL on submission and debounced intervals
-- [ ] Participants can submit their completed whiteboard to the facilitator
-- [ ] Facilitator can browse submitted team whiteboards and project selected boards onto the Projector View
-- [ ] Whiteboard opened, saved, and submitted events are recorded in the event log
+- [x] Facilitator can create a Whiteboard activity (individual, team, or whole-session)
+- [x] Participants on the same board draw collaboratively via real-time Socket.IO room broadcasts
+- [x] Whiteboard scene state (elements and app state) persists to PostgreSQL on submission and debounced intervals
+- [x] Participants can submit their completed whiteboard to the facilitator
+- [x] Facilitator can browse submitted team whiteboards and project selected boards onto the Projector View
+- [x] Whiteboard opened, saved, and submitted events are recorded in the event log

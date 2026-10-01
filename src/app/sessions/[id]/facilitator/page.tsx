@@ -49,10 +49,13 @@ export default function FacilitatorDashboard() {
   const [activities, setActivities] = useState<any[]>([]);
   const [activeActivity, setActiveActivity] = useState<any>(null);
   const [responses, setResponses] = useState<any[]>([]);
+  const [whiteboards, setWhiteboards] = useState<any[]>([]);
+  const [projectedWbId, setProjectedWbId] = useState<string | null>(null);
   const [showCreateActivity, setShowCreateActivity] = useState(false);
   const [newActTitle, setNewActTitle] = useState("");
   const [newActPrompt, setNewActPrompt] = useState("");
   const [newActReveal, setNewActReveal] = useState("UPON_LOCK");
+  const [newActType, setNewActType] = useState("OPEN_QUESTION");
 
   // Teams State
   const [teams, setTeams] = useState<any[]>([]);
@@ -82,7 +85,11 @@ export default function FacilitatorDashboard() {
           const current = actData.find((a: any) => a.state === "ACTIVE" || a.state === "LOCKED");
           if (current) {
             setActiveActivity(current);
-            loadResponses(current.id);
+            if (current.type === "WHITEBOARD") {
+              loadWhiteboards(current.id);
+            } else {
+              loadResponses(current.id);
+            }
           }
         }
 
@@ -126,13 +133,31 @@ export default function FacilitatorDashboard() {
       setResponses((prev) => [response, ...prev.filter((r) => r.id !== response.id)]);
     });
 
+    socket.on("whiteboard:submitted", () => {
+      if (activeActivity?.id) {
+        loadWhiteboards(activeActivity.id);
+      }
+    });
+
     return () => {
       socket.off("session:roster_updated");
       socket.off("team:roster_updated");
       socket.off("team:member_reassigned");
       socket.off("response:added");
+      socket.off("whiteboard:submitted");
     };
-  }, [id]);
+  }, [id, activeActivity?.id]);
+
+  const loadWhiteboards = async (actId: string) => {
+    try {
+      const res = await fetch(`/api/activities/${actId}/whiteboards?isFacilitator=true`);
+      if (res.ok) {
+        setWhiteboards(await res.json());
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const loadResponses = async (actId: string) => {
     try {
@@ -180,6 +205,7 @@ export default function FacilitatorDashboard() {
           title: newActTitle.trim(),
           prompt: newActPrompt.trim(),
           revealMode: newActReveal,
+          type: newActType,
           presentationSlide: currentSlide,
         }),
       });
@@ -217,10 +243,15 @@ export default function FacilitatorDashboard() {
 
       if (state === "ACTIVE" || state === "LOCKED") {
         setActiveActivity(updated);
-        loadResponses(updated.id);
+        if (updated.type === "WHITEBOARD") {
+          loadWhiteboards(updated.id);
+        } else {
+          loadResponses(updated.id);
+        }
       } else if (state === "COMPLETED") {
         setActiveActivity(null);
         setResponses([]);
+        setWhiteboards([]);
       }
 
       // Broadcast over socket to participants and projector view
@@ -229,6 +260,13 @@ export default function FacilitatorDashboard() {
     } catch (err: any) {
       alert(err.message);
     }
+  };
+
+  const handleToggleProjectWhiteboard = (whiteboardId: string) => {
+    const targetId = projectedWbId === whiteboardId ? "" : whiteboardId;
+    setProjectedWbId(targetId || null);
+    const socket = getSocket();
+    socket.emit("whiteboard:project", { sessionId: id, whiteboardId: targetId });
   };
 
   const handleTimerAction = async (
@@ -510,21 +548,34 @@ export default function FacilitatorDashboard() {
                     className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200"
                   />
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-slate-600 font-medium">Reveal Mode:</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-600 font-medium block mb-1">Activity Type:</label>
+                    <select
+                      value={newActType}
+                      onChange={(e) => setNewActType(e.target.value)}
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white"
+                    >
+                      <option value="OPEN_QUESTION">Open Question Discussion</option>
+                      <option value="WHITEBOARD">Collaborative Whiteboard</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-600 font-medium block mb-1">Reveal Mode:</label>
                     <select
                       value={newActReveal}
                       onChange={(e) => setNewActReveal(e.target.value)}
-                      className="px-2.5 py-1 text-xs rounded-lg border border-slate-200 bg-white"
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white"
                     >
                       <option value="UPON_LOCK">Hide responses until Locked (Anti-bias)</option>
                       <option value="IMMEDIATE">Stream responses live (Brainstorm)</option>
                     </select>
                   </div>
+                </div>
+                <div className="flex justify-end pt-1">
                   <button
                     type="submit"
-                    className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow transition"
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow transition"
                   >
                     Save Activity
                   </button>
@@ -597,52 +648,115 @@ export default function FacilitatorDashboard() {
                   <p className="text-sm font-semibold text-slate-800 mt-1">{activeActivity.prompt}</p>
                 </div>
 
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Live Submissions ({responses.length})
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      Mode: <strong className="text-slate-600">{activeActivity.revealMode}</strong>
-                    </span>
-                  </div>
+                {activeActivity.type === "WHITEBOARD" ? (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                        Whiteboard Submissions ({whiteboards.filter((w) => w.isSubmitted).length}/{whiteboards.length})
+                      </span>
+                    </div>
 
-                  {responses.length === 0 ? (
-                    <div className="text-center py-8 text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                      Waiting for participant submissions...
-                    </div>
-                  ) : (
-                    <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-                      {responses.map((resp) => (
-                        <div
-                          key={resp.id}
-                          className={`p-3.5 rounded-xl border transition ${
-                            resp.isHidden ? "bg-red-50/50 border-red-200 opacity-60" : "bg-white border-slate-200 shadow-sm"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-xs font-bold text-slate-700">
-                              {resp.participant?.displayName || "Participant"}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              {resp.isHidden && (
-                                <span className="text-[10px] text-red-600 font-bold uppercase">Hidden</span>
-                              )}
-                              <button
-                                onClick={() => toggleModerate(resp.id, resp.isHidden)}
-                                title={resp.isHidden ? "Unhide response" : "Hide response from participants"}
-                                className="text-slate-400 hover:text-slate-700 transition"
-                              >
-                                {resp.isHidden ? <Eye className="w-4 h-4 text-emerald-600" /> : <EyeOff className="w-4 h-4 text-slate-400" />}
-                              </button>
+                    {whiteboards.length === 0 ? (
+                      <div className="text-center py-8 text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        Waiting for teams or participants to draw and submit their boards...
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                        {whiteboards.map((wb) => {
+                          const isProjected = projectedWbId === wb.id;
+                          return (
+                            <div
+                              key={wb.id}
+                              className="p-3.5 bg-white rounded-xl border border-slate-200 shadow-sm flex items-center justify-between"
+                            >
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-800">
+                                    {wb.team?.name || wb.participant?.displayName || "Participant Board"}
+                                  </span>
+                                  <span
+                                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                                      wb.isSubmitted
+                                        ? "bg-emerald-100 text-emerald-800"
+                                        : "bg-amber-100 text-amber-800"
+                                    }`}
+                                  >
+                                    {wb.isSubmitted ? "Submitted" : "Drawing"}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 mt-0.5">
+                                  {wb.team?.members ? `${wb.team.members.length} members` : "Individual"}
+                                  {wb.submittedAt && ` • Submitted ${new Date(wb.submittedAt).toLocaleTimeString()}`}
+                                </p>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleToggleProjectWhiteboard(wb.id)}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm ${
+                                    isProjected
+                                      ? "bg-rose-600 hover:bg-rose-700 text-white"
+                                      : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                                  }`}
+                                >
+                                  <Presentation className="w-3.5 h-3.5" />
+                                  {isProjected ? "Unproject" : "Project on Screen"}
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                          <p className="text-xs text-slate-800">{resp.content}</p>
-                        </div>
-                      ))}
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                        Live Submissions ({responses.length})
+                      </span>
+                      <span className="text-xs text-slate-400">
+                        Mode: <strong className="text-slate-600">{activeActivity.revealMode}</strong>
+                      </span>
                     </div>
-                  )}
-                </div>
+
+                    {responses.length === 0 ? (
+                      <div className="text-center py-8 text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        Waiting for participant submissions...
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                        {responses.map((resp) => (
+                          <div
+                            key={resp.id}
+                            className={`p-3.5 rounded-xl border transition ${
+                              resp.isHidden ? "bg-red-50/50 border-red-200 opacity-60" : "bg-white border-slate-200 shadow-sm"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-bold text-slate-700">
+                                {resp.participant?.displayName || "Participant"}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                {resp.isHidden && (
+                                  <span className="text-[10px] text-red-600 font-bold uppercase">Hidden</span>
+                                )}
+                                <button
+                                  onClick={() => toggleModerate(resp.id, resp.isHidden)}
+                                  title={resp.isHidden ? "Unhide response" : "Hide response from participants"}
+                                  className="text-slate-400 hover:text-slate-700 transition"
+                                >
+                                  {resp.isHidden ? <Eye className="w-4 h-4 text-emerald-600" /> : <EyeOff className="w-4 h-4 text-slate-400" />}
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-xs text-slate-800">{resp.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div>

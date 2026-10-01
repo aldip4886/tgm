@@ -85,6 +85,18 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
     socket.on("whiteboard:join", ({ whiteboardId }: { whiteboardId: string }) => {
       socket.join(`whiteboard:${whiteboardId}`);
     });
+
+    socket.on("whiteboard:leave", ({ whiteboardId }: { whiteboardId: string }) => {
+      socket.leave(`whiteboard:${whiteboardId}`);
+    });
+
+    socket.on("whiteboard:submitted", ({ sessionId, whiteboardId, teamId, participantId }: any) => {
+      io?.to(`session:${sessionId}`).emit("whiteboard:submitted", { whiteboardId, teamId, participantId });
+    });
+
+    socket.on("whiteboard:project", ({ sessionId, whiteboardId }: { sessionId: string; whiteboardId: string }) => {
+      io?.to(`session:${sessionId}`).emit("whiteboard:projected", { whiteboardId });
+    });
   });
 
   return io;

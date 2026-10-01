@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/lib/socket-client";
 import { DigitalTimer } from "@/components/DigitalTimer";
+import { CollaborativeWhiteboard } from "@/components/CollaborativeWhiteboard";
 import {
   Sparkles,
   Users,
@@ -35,6 +36,7 @@ export default function ParticipantSessionView() {
   const [submitting, setSubmitting] = useState(false);
   const [peerResponses, setPeerResponses] = useState<any[]>([]);
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [myWhiteboard, setMyWhiteboard] = useState<any>(null);
 
   useEffect(() => {
     async function initParticipant() {
@@ -69,7 +71,11 @@ export default function ParticipantSessionView() {
           const current = actData.find((a: any) => a.state === "ACTIVE" || a.state === "LOCKED");
           if (current) {
             setActiveActivity(current);
-            loadActivityResponses(current.id, storedToken);
+            if (current.type === "WHITEBOARD") {
+              loadWhiteboard(current.id, partData.id, partData.teamId);
+            } else {
+              loadActivityResponses(current.id, storedToken);
+            }
           }
         }
 
@@ -83,11 +89,16 @@ export default function ParticipantSessionView() {
         socket.on("activity:state_updated", ({ activity }: { activity: any }) => {
           if (activity.state === "ACTIVE" || activity.state === "LOCKED") {
             setActiveActivity(activity);
-            loadActivityResponses(activity.id, storedToken);
+            if (activity.type === "WHITEBOARD") {
+              loadWhiteboard(activity.id, partData.id, partData.teamId);
+            } else {
+              loadActivityResponses(activity.id, storedToken);
+            }
           } else {
             setActiveActivity(null);
             setMyResponse(null);
             setPeerResponses([]);
+            setMyWhiteboard(null);
           }
         });
 
@@ -143,6 +154,20 @@ export default function ParticipantSessionView() {
       socket.off("timer:updated");
     };
   }, [id]);
+
+  const loadWhiteboard = async (activityId: string, partId: string, tId?: string) => {
+    try {
+      const res = await fetch(
+        `/api/activities/${activityId}/whiteboards?participantId=${partId}&teamId=${tId || ""}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setMyWhiteboard(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const loadActivityResponses = async (activityId: string, authToken: string) => {
     try {
@@ -344,37 +369,60 @@ export default function ParticipantSessionView() {
                 {activeActivity.prompt}
               </p>
 
-              {/* Response Submission Form */}
-              {activeActivity.state === "ACTIVE" && !myResponse && (
-                <form onSubmit={handleSubmitResponse} className="mt-4 space-y-3">
-                  <textarea
-                    rows={3}
-                    required
-                    value={responseInput}
-                    onChange={(e) => setResponseInput(e.target.value)}
-                    placeholder="Type your response here..."
-                    className="w-full px-4 py-3 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-100 flex items-center justify-center gap-2 transition disabled:opacity-50"
-                  >
-                    <Send className="w-4 h-4" />
-                    {submitting ? "Submitting..." : "Submit Response"}
-                  </button>
-                </form>
-              )}
-
-              {/* Already Submitted Feedback */}
-              {myResponse && (
-                <div className="mt-4 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
-                  <div className="flex items-center gap-2 text-emerald-800 text-xs font-bold mb-1">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    Your Submission
-                  </div>
-                  <p className="text-xs text-slate-800">{myResponse.content}</p>
+              {/* Whiteboard Workspace OR Text Response Submission */}
+              {activeActivity.type === "WHITEBOARD" ? (
+                <div className="mt-4">
+                  {myWhiteboard ? (
+                    <CollaborativeWhiteboard
+                      whiteboardId={myWhiteboard.id}
+                      sessionId={id}
+                      participantId={participant.id}
+                      teamId={participant.teamId}
+                      readOnly={activeActivity.state === "LOCKED"}
+                      initialSceneData={myWhiteboard.sceneData}
+                      onSubmitted={() => setMyWhiteboard((prev: any) => ({ ...prev, isSubmitted: true }))}
+                    />
+                  ) : (
+                    <div className="text-center py-8 text-slate-400 text-xs">
+                      Loading whiteboard canvas...
+                    </div>
+                  )}
                 </div>
+              ) : (
+                <>
+                  {/* Response Submission Form */}
+                  {activeActivity.state === "ACTIVE" && !myResponse && (
+                    <form onSubmit={handleSubmitResponse} className="mt-4 space-y-3">
+                      <textarea
+                        rows={3}
+                        required
+                        value={responseInput}
+                        onChange={(e) => setResponseInput(e.target.value)}
+                        placeholder="Type your response here..."
+                        className="w-full px-4 py-3 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                        type="submit"
+                        disabled={submitting}
+                        className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-100 flex items-center justify-center gap-2 transition disabled:opacity-50"
+                      >
+                        <Send className="w-4 h-4" />
+                        {submitting ? "Submitting..." : "Submit Response"}
+                      </button>
+                    </form>
+                  )}
+
+                  {/* Already Submitted Feedback */}
+                  {myResponse && (
+                    <div className="mt-4 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                      <div className="flex items-center gap-2 text-emerald-800 text-xs font-bold mb-1">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        Your Submission
+                      </div>
+                      <p className="text-xs text-slate-800">{myResponse.content}</p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 

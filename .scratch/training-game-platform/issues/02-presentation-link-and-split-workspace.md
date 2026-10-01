@@ -5,11 +5,11 @@ Facilitators can link a Canva presentation to a training session (either via pub
 
 **Blocked by:** 01: Foundation & Ephemeral Session Joining
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Facilitator can input a Canva presentation URL and slide count, or connect via Canva OAuth
-- [ ] Facilitator can define presentation mappings associating slide numbers with title and checkpoints
-- [ ] Facilitator Dashboard provides a split view with presentation preview/navigation and live controls
-- [ ] Facilitator can launch a pop-out "Projector View" route displaying only the presentation for external screens
-- [ ] Advancing slides in the Facilitator Dashboard synchronizes the slide display in the Projector View
-- [ ] Presentation view events are recorded in the event log
+- [x] Facilitator can input a Canva presentation URL and slide count, or connect via Canva OAuth
+- [x] Facilitator can define presentation mappings associating slide numbers with title and checkpoints
+- [x] Facilitator Dashboard provides a split view with presentation preview/navigation and live controls
+- [x] Facilitator can launch a pop-out "Projector View" route displaying only the presentation for external screens
+- [x] Advancing slides in the Facilitator Dashboard synchronizes the slide display in the Projector View
+- [x] Presentation view events are recorded in the event log

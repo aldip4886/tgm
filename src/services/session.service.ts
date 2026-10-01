@@ -11,17 +11,6 @@ export interface CreateSessionInput {
 }
 
 export async function createSession(input: CreateSessionInput) {
-  // Ensure facilitator user exists
-  const facilitator = await prisma.user.upsert({
-    where: { email: input.facilitatorEmail },
-    update: { name: input.facilitatorName },
-    create: {
-      email: input.facilitatorEmail,
-      name: input.facilitatorName,
-      role: "FACILITATOR",
-    },
-  });
-
   // Generate unique 6-character code
   let code = generateSessionCode();
   let existing = await prisma.session.findUnique({ where: { code } });
@@ -37,6 +26,17 @@ export async function createSession(input: CreateSessionInput) {
   );
 
   return await prisma.$transaction(async (tx) => {
+    // Ensure facilitator user exists atomically inside transaction
+    const facilitator = await tx.user.upsert({
+      where: { email: input.facilitatorEmail },
+      update: { name: input.facilitatorName },
+      create: {
+        email: input.facilitatorEmail,
+        name: input.facilitatorName,
+        role: "FACILITATOR",
+      },
+    });
+
     const session = await tx.session.create({
       data: {
         title: input.title,

@@ -1,0 +1,130 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import { getSocket } from "@/lib/socket-client";
+import { Presentation, Sparkles, QrCode } from "lucide-react";
+
+export default function ProjectorView() {
+  const { id } = useParams<{ id: string }>();
+  const [session, setSession] = useState<any>(null);
+  const [currentSlide, setCurrentSlide] = useState(1);
+  const [currentMapping, setCurrentMapping] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadSession() {
+      try {
+        const res = await fetch(`/api/sessions/${id}`);
+        if (!res.ok) throw new Error("Failed to load session");
+        const data = await res.json();
+        setSession(data);
+
+        // Find initial mapping if slide 1 exists
+        const mapping = (data.presentationMappings || []).find((m: any) => m.slideNumber === 1);
+        if (mapping) setCurrentMapping(mapping);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadSession();
+
+    const socket = getSocket();
+    socket.emit("session:join", { sessionId: id });
+
+    socket.on("presentation:slide_updated", (data: { slideNumber: number }) => {
+      setCurrentSlide(data.slideNumber);
+    });
+
+    return () => {
+      socket.off("presentation:slide_updated");
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (session?.presentationMappings) {
+      const mapping = session.presentationMappings.find((m: any) => m.slideNumber === currentSlide);
+      setCurrentMapping(mapping || null);
+    }
+  }, [currentSlide, session]);
+
+  if (loading || !session) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-300">
+        Loading Projector View...
+      </div>
+    );
+  }
+
+  // Convert canva view link to embed link if applicable
+  const embedUrl = session.canvaPresentationUrl
+    ? session.canvaPresentationUrl.includes("view?embed")
+      ? session.canvaPresentationUrl
+      : session.canvaPresentationUrl.replace("/view", "/view?embed")
+    : null;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white flex flex-col select-none overflow-hidden">
+      {/* Top Ambient Bar */}
+      <header className="px-8 py-4 bg-slate-900/80 backdrop-blur border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-sm">
+            {currentSlide}
+          </div>
+          <div>
+            <h1 className="text-base font-semibold text-slate-100">{session.title}</h1>
+            <p className="text-xs text-slate-400">
+              {currentMapping ? currentMapping.title : `Slide ${currentSlide} of ${session.canvaSlideCount || 1}`}
+            </p>
+          </div>
+        </div>
+
+        {/* Join Prompt Banner for Audience */}
+        <div className="flex items-center gap-4 bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700">
+          <div className="text-right">
+            <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Join Live</span>
+            <span className="font-mono text-base font-bold text-indigo-400 tracking-wider">{session.code}</span>
+          </div>
+          <div className="p-1.5 bg-indigo-600/30 text-indigo-400 rounded-lg">
+            <QrCode className="w-5 h-5" />
+          </div>
+        </div>
+      </header>
+
+      {/* Main Projector Presentation Area */}
+      <main className="flex-1 flex flex-col items-center justify-center p-6 relative">
+        {embedUrl ? (
+          <div className="w-full h-full max-h-[85vh] rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-black">
+            <iframe
+              src={embedUrl}
+              className="w-full h-full border-0"
+              allowFullScreen
+              allow="fullscreen"
+            />
+          </div>
+        ) : (
+          <div className="max-w-2xl text-center space-y-4">
+            <div className="w-20 h-20 bg-indigo-600/20 text-indigo-400 rounded-3xl flex items-center justify-center mx-auto shadow-inner">
+              <Presentation className="w-10 h-10" />
+            </div>
+            <h2 className="text-3xl font-extrabold text-slate-100 tracking-tight">
+              {currentMapping?.title || `Slide ${currentSlide}`}
+            </h2>
+            {currentMapping?.checkpoint && (
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-sm font-medium border border-indigo-500/30">
+                <Sparkles className="w-4 h-4" />
+                Checkpoint: {currentMapping.checkpoint}
+              </div>
+            )}
+            <p className="text-slate-400 text-sm max-w-lg mx-auto">
+              Follow along with the facilitator. Interactive challenges will activate automatically.
+            </p>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

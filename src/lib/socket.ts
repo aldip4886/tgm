@@ -17,7 +17,6 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
   });
 
   io.on("connection", (socket: Socket) => {
-    // Participant / Facilitator joins a session room
     socket.on("session:join", async ({ sessionId, participantId, isFacilitator }: { sessionId: string; participantId?: string; isFacilitator?: boolean }) => {
       socket.join(`session:${sessionId}`);
 
@@ -30,7 +29,6 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
         }).catch(() => {});
       }
 
-      // Notify the room of updated roster
       const participants = await prisma.sessionParticipant.findMany({
         where: { sessionId },
         orderBy: { joinedAt: "asc" },
@@ -39,7 +37,6 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
       io?.to(`session:${sessionId}`).emit("session:roster_updated", { participants });
     });
 
-    // Handle disconnect
     socket.on("disconnect", async () => {
       const { participantId, sessionId } = socket.data;
       if (participantId && sessionId) {
@@ -57,22 +54,22 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
       }
     });
 
-    // Slide navigation synchronization (Facilitator -> Projector)
     socket.on("presentation:slide_change", ({ sessionId, slideNumber }: { sessionId: string; slideNumber: number }) => {
       io?.to(`session:${sessionId}`).emit("presentation:slide_updated", { slideNumber });
     });
 
-    // Activity state transition broadcast
     socket.on("activity:change_state", ({ sessionId, activity }: { sessionId: string; activity: any }) => {
       io?.to(`session:${sessionId}`).emit("activity:state_updated", { activity });
     });
 
-    // Response submission broadcast
+    socket.on("timer:sync", ({ sessionId, activityId, timerStatus, timerEndsAt, timerRemainingMs }: { sessionId: string; activityId: string; timerStatus: string; timerEndsAt?: string | null; timerRemainingMs?: number }) => {
+      io?.to(`session:${sessionId}`).emit("timer:updated", { activityId, timerStatus, timerEndsAt, timerRemainingMs });
+    });
+
     socket.on("response:new", ({ sessionId, response }: { sessionId: string; response: any }) => {
       io?.to(`session:${sessionId}`).emit("response:added", { response });
     });
 
-    // Real-time Excalidraw vector drawing broadcast
     socket.on("whiteboard:draw", ({ whiteboardId, elements, appState }: { whiteboardId: string; elements: any; appState: any }) => {
       socket.to(`whiteboard:${whiteboardId}`).emit("whiteboard:scene_updated", { elements, appState });
     });

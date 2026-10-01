@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { getSocket } from "@/lib/socket-client";
+import { DigitalTimer } from "@/components/DigitalTimer";
 import { Presentation, Sparkles, QrCode } from "lucide-react";
 
 export default function ProjectorView() {
@@ -10,6 +11,7 @@ export default function ProjectorView() {
   const [session, setSession] = useState<any>(null);
   const [currentSlide, setCurrentSlide] = useState(1);
   const [currentMapping, setCurrentMapping] = useState<any>(null);
+  const [timerState, setTimerState] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -23,6 +25,16 @@ export default function ProjectorView() {
         // Find initial mapping if slide 1 exists
         const mapping = (data.presentationMappings || []).find((m: any) => m.slideNumber === 1);
         if (mapping) setCurrentMapping(mapping);
+
+        // Check active activity timer
+        const activeAct = (data.activities || []).find((a: any) => a.state === "ACTIVE");
+        if (activeAct && activeAct.timerStatus !== "STOPPED") {
+          setTimerState({
+            status: activeAct.timerStatus,
+            endsAt: activeAct.timerEndsAt,
+            remainingMs: activeAct.timerRemainingMs,
+          });
+        }
       } catch (err) {
         console.error(err);
       } finally {
@@ -39,8 +51,17 @@ export default function ProjectorView() {
       setCurrentSlide(data.slideNumber);
     });
 
+    socket.on("timer:updated", (data: any) => {
+      setTimerState({
+        status: data.timerStatus,
+        endsAt: data.timerEndsAt,
+        remainingMs: data.timerRemainingMs,
+      });
+    });
+
     return () => {
       socket.off("presentation:slide_updated");
+      socket.off("timer:updated");
     };
   }, [id]);
 
@@ -81,6 +102,18 @@ export default function ProjectorView() {
             </p>
           </div>
         </div>
+
+        {/* Center Synchronized Timer */}
+        {timerState && timerState.status !== "STOPPED" && (
+          <div>
+            <DigitalTimer
+              endsAt={timerState.endsAt}
+              remainingMs={timerState.remainingMs}
+              status={timerState.status}
+              size="lg"
+            />
+          </div>
+        )}
 
         {/* Join Prompt Banner for Audience */}
         <div className="flex items-center gap-4 bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700">

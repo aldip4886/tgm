@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { getSocket } from "@/lib/socket-client";
+import { DigitalTimer } from "@/components/DigitalTimer";
 import {
   Users,
   QrCode,
@@ -194,6 +195,35 @@ export default function FacilitatorDashboard() {
       // Broadcast over socket to participants and projector view
       const socket = getSocket();
       socket.emit("activity:change_state", { sessionId: id, activity: updated });
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleTimerAction = async (
+    action: "start" | "pause" | "resume" | "extend" | "complete",
+    durationSeconds?: number,
+    extraSeconds?: number
+  ) => {
+    if (!activeActivity) return;
+    try {
+      const res = await fetch(`/api/activities/${activeActivity.id}/timer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, durationSeconds, extraSeconds }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setActiveActivity(updated);
+        const socket = getSocket();
+        socket.emit("timer:sync", {
+          sessionId: id,
+          activityId: activeActivity.id,
+          timerStatus: updated.timerStatus,
+          timerEndsAt: updated.timerEndsAt,
+          timerRemainingMs: updated.timerRemainingMs,
+        });
+      }
     } catch (err: any) {
       alert(err.message);
     }
@@ -434,6 +464,63 @@ export default function FacilitatorDashboard() {
             {/* If an activity is active/locked, show prompt and live responses */}
             {activeActivity ? (
               <div className="space-y-4">
+                {/* Timer Controls Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-900 text-white rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <DigitalTimer
+                      endsAt={activeActivity.timerEndsAt}
+                      remainingMs={activeActivity.timerRemainingMs}
+                      status={activeActivity.timerStatus || "STOPPED"}
+                      onExpire={() => handleTimerAction("complete")}
+                      size="sm"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      {activeActivity.timerStatus !== "RUNNING" ? (
+                        <>
+                          <button
+                            onClick={() => handleTimerAction("start", 120)}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg text-slate-200 transition"
+                          >
+                            2m
+                          </button>
+                          <button
+                            onClick={() => handleTimerAction("start", 300)}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg text-slate-200 transition"
+                          >
+                            5m
+                          </button>
+                          {activeActivity.timerStatus === "PAUSED" && (
+                            <button
+                              onClick={() => handleTimerAction("resume")}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold rounded-lg text-white transition"
+                            >
+                              Resume
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => handleTimerAction("pause")}
+                            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-xs font-semibold rounded-lg text-white transition"
+                          >
+                            Pause
+                          </button>
+                          <button
+                            onClick={() => handleTimerAction("extend", undefined, 60)}
+                            className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold rounded-lg text-white transition"
+                          >
+                            +1m
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {activeActivity.timerStatus === "RUNNING" && (
+                    <span className="text-[11px] text-emerald-400 font-mono animate-pulse">● Live Synchronized</span>
+                  )}
+                </div>
+
                 <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100">
                   <span className="block text-[10px] uppercase font-bold text-indigo-500 tracking-wider">Current Prompt</span>
                   <p className="text-sm font-semibold text-slate-800 mt-1">{activeActivity.prompt}</p>

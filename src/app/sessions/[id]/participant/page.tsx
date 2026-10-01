@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/lib/socket-client";
+import { DigitalTimer } from "@/components/DigitalTimer";
 import {
   Sparkles,
   Users,
@@ -89,6 +90,12 @@ export default function ParticipantSessionView() {
         socket.on("response:added", ({ response }: { response: any }) => {
           setPeerResponses((prev) => [response, ...prev.filter((r) => r.id !== response.id)]);
         });
+
+        socket.on("timer:updated", ({ timerStatus, timerEndsAt, timerRemainingMs }: any) => {
+          setActiveActivity((prev: any) =>
+            prev ? { ...prev, timerStatus, timerEndsAt, timerRemainingMs } : prev
+          );
+        });
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -102,6 +109,7 @@ export default function ParticipantSessionView() {
       const socket = getSocket();
       socket.off("activity:state_updated");
       socket.off("response:added");
+      socket.off("timer:updated");
     };
   }, [id]);
 
@@ -210,9 +218,19 @@ export default function ParticipantSessionView() {
             {/* Active Activity Card */}
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full">
-                  Live Challenge
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full">
+                    Live Challenge
+                  </span>
+                  {activeActivity.timerStatus && activeActivity.timerStatus !== "STOPPED" && (
+                    <DigitalTimer
+                      endsAt={activeActivity.timerEndsAt}
+                      remainingMs={activeActivity.timerRemainingMs}
+                      status={activeActivity.timerStatus}
+                      size="sm"
+                    />
+                  )}
+                </div>
                 <span
                   className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                     activeActivity.state === "ACTIVE"

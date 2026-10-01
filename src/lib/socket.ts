@@ -62,6 +62,16 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
       io?.to(`session:${sessionId}`).emit("presentation:slide_updated", { slideNumber });
     });
 
+    // Activity state transition broadcast
+    socket.on("activity:change_state", ({ sessionId, activity }: { sessionId: string; activity: any }) => {
+      io?.to(`session:${sessionId}`).emit("activity:state_updated", { activity });
+    });
+
+    // Response submission broadcast
+    socket.on("response:new", ({ sessionId, response }: { sessionId: string; response: any }) => {
+      io?.to(`session:${sessionId}`).emit("response:added", { response });
+    });
+
     // Real-time Excalidraw vector drawing broadcast
     socket.on("whiteboard:draw", ({ whiteboardId, elements, appState }: { whiteboardId: string; elements: any; appState: any }) => {
       socket.to(`whiteboard:${whiteboardId}`).emit("whiteboard:scene_updated", { elements, appState });

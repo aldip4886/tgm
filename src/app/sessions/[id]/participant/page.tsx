@@ -3,7 +3,16 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/lib/socket-client";
-import { Sparkles, Users, Award, ShieldAlert, Heart, MessageSquare } from "lucide-react";
+import {
+  Sparkles,
+  Users,
+  Award,
+  ShieldAlert,
+  Heart,
+  Send,
+  Lock,
+  CheckCircle2,
+} from "lucide-react";
 
 export default function ParticipantSessionView() {
   const { id } = useParams<{ id: string }>();
@@ -11,8 +20,16 @@ export default function ParticipantSessionView() {
 
   const [session, setSession] = useState<any>(null);
   const [participant, setParticipant] = useState<any>(null);
+  const [token, setToken] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Activity & Responses State
+  const [activeActivity, setActiveActivity] = useState<any>(null);
+  const [myResponse, setMyResponse] = useState<any>(null);
+  const [responseInput, setResponseInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [peerResponses, setPeerResponses] = useState<any[]>([]);
 
   useEffect(() => {
     async function initParticipant() {
@@ -23,8 +40,8 @@ export default function ParticipantSessionView() {
           setLoading(false);
           return;
         }
+        setToken(storedToken);
 
-        // Validate token and reconnect
         const res = await fetch("/api/sessions/reconnect", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -40,11 +57,37 @@ export default function ParticipantSessionView() {
         setParticipant(partData);
         setSession(partData.session);
 
-        // Join real-time socket room
+        // Fetch any currently active activity
+        const actRes = await fetch(`/api/sessions/${id}/activities`);
+        if (actRes.ok) {
+          const actData = await actRes.json();
+          const current = actData.find((a: any) => a.state === "ACTIVE" || a.state === "LOCKED");
+          if (current) {
+            setActiveActivity(current);
+            loadActivityResponses(current.id, storedToken);
+          }
+        }
+
+        // Socket connection
         const socket = getSocket();
         socket.emit("session:join", {
           sessionId: id,
           participantId: partData.id,
+        });
+
+        socket.on("activity:state_updated", ({ activity }: { activity: any }) => {
+          if (activity.state === "ACTIVE" || activity.state === "LOCKED") {
+            setActiveActivity(activity);
+            loadActivityResponses(activity.id, storedToken);
+          } else {
+            setActiveActivity(null);
+            setMyResponse(null);
+            setPeerResponses([]);
+          }
+        });
+
+        socket.on("response:added", ({ response }: { response: any }) => {
+          setPeerResponses((prev) => [response, ...prev.filter((r) => r.id !== response.id)]);
         });
       } catch (err: any) {
         setError(err.message);
@@ -54,7 +97,63 @@ export default function ParticipantSessionView() {
     }
 
     initParticipant();
+
+    return () => {
+      const socket = getSocket();
+      socket.off("activity:state_updated");
+      socket.off("response:added");
+    };
   }, [id]);
+
+  const loadActivityResponses = async (activityId: string, authToken: string) => {
+    try {
+      const res = await fetch(`/api/activities/${activityId}/responses`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPeerResponses(data);
+        const mine = data.find((r: any) => r.participantId === participant?.id);
+        if (mine) setMyResponse(mine);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSubmitResponse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!responseInput.trim() || !activeActivity) return;
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/activities/${activeActivity.id}/responses`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: responseInput.trim() }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to submit response");
+      }
+
+      const response = await res.json();
+      setMyResponse(response);
+      setResponseInput("");
+
+      // Notify room via socket
+      const socket = getSocket();
+      socket.emit("response:new", { sessionId: id, response });
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -82,11 +181,13 @@ export default function ParticipantSessionView() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      {/* Participant Top Header */}
+      {/* Top Header */}
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
         <div>
           <h1 className="text-base font-bold text-slate-900">{session?.title}</h1>
-          <p className="text-xs text-slate-500">Welcome, <strong className="text-indigo-600">{participant.displayName}</strong></p>
+          <p className="text-xs text-slate-500">
+            Welcome, <strong className="text-indigo-600">{participant.displayName}</strong>
+          </p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -102,36 +203,121 @@ export default function ParticipantSessionView() {
         </div>
       </header>
 
-      {/* Main Participant Screen */}
-      <main className="flex-1 max-w-2xl w-full mx-auto p-6 flex flex-col items-center justify-center">
-        <div className="w-full bg-white rounded-2xl p-8 border border-slate-200 shadow-sm text-center">
-          <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Sparkles className="w-7 h-7" />
-          </div>
+      {/* Main Content Area */}
+      <main className="flex-1 max-w-2xl w-full mx-auto p-6 flex flex-col justify-start">
+        {activeActivity ? (
+          <div className="space-y-6">
+            {/* Active Activity Card */}
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full">
+                  Live Challenge
+                </span>
+                <span
+                  className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    activeActivity.state === "ACTIVE"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-amber-100 text-amber-800"
+                  }`}
+                >
+                  {activeActivity.state === "ACTIVE" ? "Open for Submissions" : "Submissions Locked"}
+                </span>
+              </div>
 
-          <h2 className="text-xl font-bold text-slate-800">You're in the Session!</h2>
-          <p className="text-sm text-slate-500 max-w-md mx-auto mt-2">
-            The facilitator is presenting. Watch the main screen. Interactive challenges, questions, and whiteboards will appear here automatically when launched.
-          </p>
+              <h2 className="text-lg font-bold text-slate-900 mb-1">{activeActivity.title}</h2>
+              <p className="text-sm text-slate-700 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                {activeActivity.prompt}
+              </p>
 
-          <div className="mt-8 pt-6 border-t border-slate-100 flex items-center justify-around text-xs text-slate-500">
-            <div>
-              <span className="block text-slate-400">Team</span>
-              <strong className="text-slate-700">{participant.team?.name || "Unassigned"}</strong>
+              {/* Response Submission Form */}
+              {activeActivity.state === "ACTIVE" && !myResponse && (
+                <form onSubmit={handleSubmitResponse} className="mt-4 space-y-3">
+                  <textarea
+                    rows={3}
+                    required
+                    value={responseInput}
+                    onChange={(e) => setResponseInput(e.target.value)}
+                    placeholder="Type your response here..."
+                    className="w-full px-4 py-3 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl shadow-md shadow-indigo-100 flex items-center justify-center gap-2 transition disabled:opacity-50"
+                  >
+                    <Send className="w-4 h-4" />
+                    {submitting ? "Submitting..." : "Submit Response"}
+                  </button>
+                </form>
+              )}
+
+              {/* Already Submitted Feedback */}
+              {myResponse && (
+                <div className="mt-4 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <div className="flex items-center gap-2 text-emerald-800 text-xs font-bold mb-1">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    Your Submission
+                  </div>
+                  <p className="text-xs text-slate-800">{myResponse.content}</p>
+                </div>
+              )}
             </div>
-            <div>
-              <span className="block text-slate-400">Role</span>
-              <strong className="text-slate-700">{participant.role}</strong>
+
+            {/* Peer Responses Feed */}
+            {(activeActivity.revealMode === "IMMEDIATE" || activeActivity.state === "LOCKED") && (
+              <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-800 mb-3">
+                  Participant Contributions ({peerResponses.length})
+                </h3>
+
+                <div className="space-y-3">
+                  {peerResponses.map((r) => (
+                    <div key={r.id} className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-bold text-slate-700">
+                          {r.participant?.displayName || "Participant"}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {new Date(r.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-800">{r.content}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="w-full bg-white rounded-2xl p-8 border border-slate-200 shadow-sm text-center">
+            <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Sparkles className="w-7 h-7" />
             </div>
-            <div>
-              <span className="block text-slate-400">Status</span>
-              <span className="inline-flex items-center gap-1 font-semibold text-emerald-600">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Connected
-              </span>
+
+            <h2 className="text-xl font-bold text-slate-800">You're in the Session!</h2>
+            <p className="text-sm text-slate-500 max-w-md mx-auto mt-2">
+              The facilitator is presenting. Watch the main screen. Interactive challenges will appear here automatically when launched.
+            </p>
+
+            <div className="mt-8 pt-6 border-t border-slate-100 flex items-center justify-around text-xs text-slate-500">
+              <div>
+                <span className="block text-slate-400">Team</span>
+                <strong className="text-slate-700">{participant.team?.name || "Unassigned"}</strong>
+              </div>
+              <div>
+                <span className="block text-slate-400">Role</span>
+                <strong className="text-slate-700">{participant.role}</strong>
+              </div>
+              <div>
+                <span className="block text-slate-400">Status</span>
+                <span className="inline-flex items-center gap-1 font-semibold text-emerald-600">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Connected
+                </span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </main>
     </div>
   );

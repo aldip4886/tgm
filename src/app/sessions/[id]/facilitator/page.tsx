@@ -10,8 +10,8 @@ import {
   ExternalLink,
   Presentation,
   Play,
-  Clock,
-  Award,
+  Lock,
+  CheckCircle,
   Sparkles,
   Layers,
   Copy,
@@ -20,6 +20,9 @@ import {
   ChevronRight,
   Link2,
   Plus,
+  Eye,
+  EyeOff,
+  MessageSquare,
 } from "lucide-react";
 
 export default function FacilitatorDashboard() {
@@ -39,17 +42,40 @@ export default function FacilitatorDashboard() {
   const [newMappingTitle, setNewMappingTitle] = useState("");
   const [newMappingSlide, setNewMappingSlide] = useState(1);
 
+  // Activity State
+  const [activities, setActivities] = useState<any[]>([]);
+  const [activeActivity, setActiveActivity] = useState<any>(null);
+  const [responses, setResponses] = useState<any[]>([]);
+  const [showCreateActivity, setShowCreateActivity] = useState(false);
+  const [newActTitle, setNewActTitle] = useState("");
+  const [newActPrompt, setNewActPrompt] = useState("");
+  const [newActReveal, setNewActReveal] = useState("UPON_LOCK");
+
   useEffect(() => {
-    async function fetchSession() {
+    async function fetchSessionData() {
       try {
-        const res = await fetch(`/api/sessions/${id}`);
-        if (!res.ok) throw new Error("Failed to load session");
-        const data = await res.json();
-        setSession(data);
-        setParticipants(data.participants || []);
-        setMappings(data.presentationMappings || []);
-        if (data.canvaPresentationUrl) setCanvaUrl(data.canvaPresentationUrl);
-        if (data.canvaSlideCount) setSlideCount(data.canvaSlideCount);
+        const [resSession, resActivities] = await Promise.all([
+          fetch(`/api/sessions/${id}`),
+          fetch(`/api/sessions/${id}/activities`),
+        ]);
+
+        if (!resSession.ok) throw new Error("Failed to load session");
+        const sessionData = await resSession.json();
+        setSession(sessionData);
+        setParticipants(sessionData.participants || []);
+        setMappings(sessionData.presentationMappings || []);
+        if (sessionData.canvaPresentationUrl) setCanvaUrl(sessionData.canvaPresentationUrl);
+        if (sessionData.canvaSlideCount) setSlideCount(sessionData.canvaSlideCount);
+
+        if (resActivities.ok) {
+          const actData = await resActivities.json();
+          setActivities(actData);
+          const current = actData.find((a: any) => a.state === "ACTIVE" || a.state === "LOCKED");
+          if (current) {
+            setActiveActivity(current);
+            loadResponses(current.id);
+          }
+        }
       } catch (err) {
         console.error(err);
       } finally {
@@ -57,7 +83,7 @@ export default function FacilitatorDashboard() {
       }
     }
 
-    fetchSession();
+    fetchSessionData();
 
     const socket = getSocket();
     socket.emit("session:join", { sessionId: id, isFacilitator: true });
@@ -66,10 +92,27 @@ export default function FacilitatorDashboard() {
       setParticipants(data.participants);
     });
 
+    socket.on("response:added", ({ response }: { response: any }) => {
+      setResponses((prev) => [response, ...prev.filter((r) => r.id !== response.id)]);
+    });
+
     return () => {
       socket.off("session:roster_updated");
+      socket.off("response:added");
     };
   }, [id]);
+
+  const loadResponses = async (actId: string) => {
+    try {
+      const res = await fetch(`/api/activities/${actId}/responses?isFacilitator=true`);
+      if (res.ok) {
+        const data = await res.json();
+        setResponses(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const copyCode = () => {
     if (session?.code) {
@@ -83,11 +126,9 @@ export default function FacilitatorDashboard() {
     if (newSlide < 1 || newSlide > slideCount) return;
     setCurrentSlide(newSlide);
 
-    // Broadcast over Socket.IO to Projector View
     const socket = getSocket();
     socket.emit("presentation:slide_change", { sessionId: id, slideNumber: newSlide });
 
-    // Record slide view event
     await fetch(`/api/sessions/${id}/slide`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -95,60 +136,90 @@ export default function FacilitatorDashboard() {
     });
   };
 
-  const handleSavePresentation = async (e: React.FormEvent) => {
+  const handleCreateActivity = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newActTitle.trim() || !newActPrompt.trim()) return;
+
     try {
-      const res = await fetch(`/api/sessions/${id}/presentation`, {
+      const res = await fetch(`/api/sessions/${id}/activities`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          canvaPresentationUrl: canvaUrl,
-          canvaSlideCount: Number(slideCount),
+          title: newActTitle.trim(),
+          prompt: newActPrompt.trim(),
+          revealMode: newActReveal,
+          presentationSlide: currentSlide,
         }),
       });
-      if (!res.ok) throw new Error("Failed to link presentation");
+
+      if (!res.ok) throw new Error("Failed to create activity");
+      const created = await res.json();
+      setActivities((prev) => [...prev, created]);
+      setShowCreateActivity(false);
+      setNewActTitle("");
+      setNewActPrompt("");
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const transitionActivity = async (activityId: string, state: "ACTIVE" | "LOCKED" | "COMPLETED") => {
+    try {
+      const res = await fetch(`/api/activities/${activityId}/state`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state }),
+      });
+
+      if (!res.ok) throw new Error("Failed to transition activity state");
       const updated = await res.json();
-      setSession(updated);
-      setShowLinkModal(false);
+
+      // Update local activities list
+      setActivities((prev) =>
+        prev.map((a) => {
+          if (a.id === activityId) return updated;
+          if (state === "ACTIVE" && a.state === "ACTIVE") return { ...a, state: "COMPLETED" };
+          return a;
+        })
+      );
+
+      if (state === "ACTIVE" || state === "LOCKED") {
+        setActiveActivity(updated);
+        loadResponses(updated.id);
+      } else if (state === "COMPLETED") {
+        setActiveActivity(null);
+        setResponses([]);
+      }
+
+      // Broadcast over socket to participants and projector view
+      const socket = getSocket();
+      socket.emit("activity:change_state", { sessionId: id, activity: updated });
     } catch (err: any) {
       alert(err.message);
     }
   };
 
-  const handleAddMapping = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMappingTitle.trim()) return;
-
+  const toggleModerate = async (responseId: string, currentHidden: boolean) => {
     try {
-      const res = await fetch(`/api/sessions/${id}/mappings`, {
-        method: "POST",
+      const res = await fetch(`/api/responses/${responseId}/moderate`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slideNumber: Number(newMappingSlide),
-          title: newMappingTitle.trim(),
-        }),
+        body: JSON.stringify({ isHidden: !currentHidden }),
       });
-      if (!res.ok) throw new Error("Failed to add mapping");
-      const mapping = await res.json();
-      setMappings((prev) => [...prev, mapping].sort((a, b) => a.slideNumber - b.slideNumber));
-      setNewMappingTitle("");
-    } catch (err: any) {
-      alert(err.message);
+      if (res.ok) {
+        setResponses((prev) =>
+          prev.map((r) => (r.id === responseId ? { ...r, isHidden: !currentHidden } : r))
+        );
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
-  if (loading) {
+  if (loading || !session) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div className="text-slate-500 font-medium">Loading session dashboard...</div>
-      </div>
-    );
-  }
-
-  if (!session) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50">
-        <div className="text-red-500 font-medium">Session not found.</div>
       </div>
     );
   }
@@ -201,9 +272,9 @@ export default function FacilitatorDashboard() {
         </div>
       </header>
 
-      {/* Main Split-Workspace */}
+      {/* Main Content Area */}
       <div className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Columns: Presentation Navigation & Live Activity Controls */}
+        {/* Left 2 Columns: Presentation Controller & Active Activity */}
         <div className="lg:col-span-2 space-y-6">
           {/* QR Code Banner */}
           {showQr && (
@@ -217,7 +288,7 @@ export default function FacilitatorDashboard() {
             </div>
           )}
 
-          {/* Presentation Controller Banner */}
+          {/* Presentation Controller */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
             <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
@@ -233,7 +304,6 @@ export default function FacilitatorDashboard() {
               </button>
             </div>
 
-            {/* Slide Navigation Stepper */}
             <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
               <div className="flex items-center gap-2">
                 <button
@@ -259,78 +329,202 @@ export default function FacilitatorDashboard() {
                 {mappings.find((m) => m.slideNumber === currentSlide)?.title ? (
                   <span>Checkpoint: <strong className="text-slate-800">{mappings.find((m) => m.slideNumber === currentSlide).title}</strong></span>
                 ) : (
-                  <span>No checkpoint mapped to Slide {currentSlide}</span>
+                  <span>No checkpoint on Slide {currentSlide}</span>
                 )}
               </div>
             </div>
-
-            {/* Checkpoint Mapping Accordion/List */}
-            <div className="mt-4 pt-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Slide Checkpoint Mappings</span>
-              </div>
-              <form onSubmit={handleAddMapping} className="flex gap-2 mb-3">
-                <input
-                  type="number"
-                  min={1}
-                  max={slideCount}
-                  value={newMappingSlide}
-                  onChange={(e) => setNewMappingSlide(Number(e.target.value))}
-                  className="w-20 px-3 py-1.5 text-xs rounded-lg border border-slate-200"
-                  placeholder="Slide"
-                />
-                <input
-                  type="text"
-                  value={newMappingTitle}
-                  onChange={(e) => setNewMappingTitle(e.target.value)}
-                  className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-200"
-                  placeholder="Checkpoint title (e.g. Case Study 1)"
-                />
-                <button
-                  type="submit"
-                  className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Map Slide
-                </button>
-              </form>
-
-              {mappings.length > 0 && (
-                <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                  {mappings.map((m) => (
-                    <div
-                      key={m.id}
-                      onClick={() => changeSlide(m.slideNumber)}
-                      className={`px-3 py-1.5 rounded-lg text-xs flex items-center justify-between cursor-pointer transition ${
-                        m.slideNumber === currentSlide
-                          ? "bg-indigo-50 text-indigo-900 font-semibold border border-indigo-200"
-                          : "bg-slate-50 text-slate-700 hover:bg-slate-100"
-                      }`}
-                    >
-                      <span>Slide {m.slideNumber}: {m.title}</span>
-                      <span className="text-[10px] text-slate-400">Jump</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
 
-          {/* Activity Center Placeholder */}
+          {/* Active Activity & Live Responses Command Panel */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
                 <Layers className="w-5 h-5 text-indigo-600" />
-                Live Activities
-              </h2>
+                <h2 className="text-base font-bold text-slate-800">
+                  {activeActivity ? activeActivity.title : "Activity Engine"}
+                </h2>
+                {activeActivity && (
+                  <span
+                    className={`px-2 py-0.5 text-xs font-semibold rounded-full ${
+                      activeActivity.state === "ACTIVE"
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-amber-100 text-amber-800"
+                    }`}
+                  >
+                    {activeActivity.state}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {activeActivity?.state === "ACTIVE" && (
+                  <button
+                    onClick={() => transitionActivity(activeActivity.id, "LOCKED")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-semibold transition"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    Lock Responses
+                  </button>
+                )}
+                {activeActivity?.state === "LOCKED" && (
+                  <button
+                    onClick={() => transitionActivity(activeActivity.id, "COMPLETED")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold transition"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    Complete Activity
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowCreateActivity(!showCreateActivity)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-sm transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  New Activity
+                </button>
+              </div>
             </div>
-            <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-              <Sparkles className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm font-medium text-slate-600">No active challenge in progress</p>
-              <p className="text-xs text-slate-400 mt-1">
-                Advance slides or launch an activity from your presentation checkpoints.
-              </p>
-            </div>
+
+            {/* Create Activity Drawer */}
+            {showCreateActivity && (
+              <form onSubmit={handleCreateActivity} className="p-4 bg-slate-50 rounded-xl border border-slate-200 mb-6 space-y-3">
+                <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Configure New Activity</h3>
+                <div>
+                  <input
+                    type="text"
+                    required
+                    value={newActTitle}
+                    onChange={(e) => setNewActTitle(e.target.value)}
+                    placeholder="Activity Title (e.g. Case Challenge 1)"
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200"
+                  />
+                </div>
+                <div>
+                  <textarea
+                    rows={2}
+                    required
+                    value={newActPrompt}
+                    onChange={(e) => setNewActPrompt(e.target.value)}
+                    placeholder="Prompt / Question for participants"
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-slate-600 font-medium">Reveal Mode:</label>
+                    <select
+                      value={newActReveal}
+                      onChange={(e) => setNewActReveal(e.target.value)}
+                      className="px-2.5 py-1 text-xs rounded-lg border border-slate-200 bg-white"
+                    >
+                      <option value="UPON_LOCK">Hide responses until Locked (Anti-bias)</option>
+                      <option value="IMMEDIATE">Stream responses live (Brainstorm)</option>
+                    </select>
+                  </div>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow transition"
+                  >
+                    Save Activity
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* If an activity is active/locked, show prompt and live responses */}
+            {activeActivity ? (
+              <div className="space-y-4">
+                <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100">
+                  <span className="block text-[10px] uppercase font-bold text-indigo-500 tracking-wider">Current Prompt</span>
+                  <p className="text-sm font-semibold text-slate-800 mt-1">{activeActivity.prompt}</p>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Live Submissions ({responses.length})
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      Mode: <strong className="text-slate-600">{activeActivity.revealMode}</strong>
+                    </span>
+                  </div>
+
+                  {responses.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                      Waiting for participant submissions...
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                      {responses.map((resp) => (
+                        <div
+                          key={resp.id}
+                          className={`p-3.5 rounded-xl border transition ${
+                            resp.isHidden ? "bg-red-50/50 border-red-200 opacity-60" : "bg-white border-slate-200 shadow-sm"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-xs font-bold text-slate-700">
+                              {resp.participant?.displayName || "Participant"}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              {resp.isHidden && (
+                                <span className="text-[10px] text-red-600 font-bold uppercase">Hidden</span>
+                              )}
+                              <button
+                                onClick={() => toggleModerate(resp.id, resp.isHidden)}
+                                title={resp.isHidden ? "Unhide response" : "Hide response from participants"}
+                                className="text-slate-400 hover:text-slate-700 transition"
+                              >
+                                {resp.isHidden ? <Eye className="w-4 h-4 text-emerald-600" /> : <EyeOff className="w-4 h-4 text-slate-400" />}
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-800">{resp.content}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p className="text-xs text-slate-500 mb-3">Activities created for this session:</p>
+                {activities.length === 0 ? (
+                  <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                    <Sparkles className="w-6 h-6 text-slate-300 mx-auto mb-2" />
+                    <p className="text-xs text-slate-500">No activities created yet. Click "New Activity" above to create one.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {activities.map((act) => (
+                      <div
+                        key={act.id}
+                        className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between"
+                      >
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-800">{act.title}</h4>
+                          <p className="text-[11px] text-slate-500 truncate max-w-sm">{act.prompt}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 px-2 py-0.5 bg-white rounded border border-slate-200">
+                            {act.state}
+                          </span>
+                          {act.state !== "ACTIVE" && (
+                            <button
+                              onClick={() => transitionActivity(act.id, "ACTIVE")}
+                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                            >
+                              <Play className="w-3 h-3" />
+                              Launch
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -371,65 +565,6 @@ export default function FacilitatorDashboard() {
           </div>
         </div>
       </div>
-
-      {/* Modal for Linking Canva Presentation */}
-      {showLinkModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-100">
-            <h3 className="text-base font-bold text-slate-900 mb-2">Connect Canva Presentation</h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Paste the public view or embed URL of your Canva presentation slide deck.
-            </p>
-
-            <form onSubmit={handleSavePresentation} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">
-                  Canva View / Embed URL
-                </label>
-                <input
-                  type="url"
-                  required
-                  value={canvaUrl}
-                  onChange={(e) => setCanvaUrl(e.target.value)}
-                  placeholder="https://www.canva.com/design/.../view"
-                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">
-                  Total Slides
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={200}
-                  required
-                  value={slideCount}
-                  onChange={(e) => setSlideCount(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowLinkModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow transition"
-                >
-                  Save Presentation
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

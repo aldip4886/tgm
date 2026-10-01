@@ -70,6 +70,14 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
       io?.to(`session:${sessionId}`).emit("response:added", { response });
     });
 
+    socket.on("team:split", ({ sessionId, teams }: { sessionId: string; teams: any[] }) => {
+      io?.to(`session:${sessionId}`).emit("team:roster_updated", { teams });
+    });
+
+    socket.on("team:member_moved", ({ sessionId, participantId, teamId }: { sessionId: string; participantId: string; teamId: string | null }) => {
+      io?.to(`session:${sessionId}`).emit("team:member_reassigned", { participantId, teamId });
+    });
+
     socket.on("whiteboard:draw", ({ whiteboardId, elements, appState }: { whiteboardId: string; elements: any; appState: any }) => {
       socket.to(`whiteboard:${whiteboardId}`).emit("whiteboard:scene_updated", { elements, appState });
     });

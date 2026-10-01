@@ -177,6 +177,10 @@ export async function awardPeerPoints(
       data: { peerPointBudget: { decrement: amount } },
     });
 
+    const recipient = await tx.sessionParticipant.findUnique({
+      where: { id: response.participantId },
+    });
+
     // Award point record in ledger (ADR-0011)
     const point = await tx.point.create({
       data: {
@@ -184,6 +188,7 @@ export async function awardPeerPoints(
         activityId: response.activityId,
         responseId,
         participantId: response.participantId,
+        teamId: recipient?.teamId || null,
         category: "PEER",
         amount,
         giverId,
@@ -196,6 +201,13 @@ export async function awardPeerPoints(
       where: { id: response.participantId },
       data: { totalPoints: { increment: amount } },
     });
+
+    if (recipient?.teamId) {
+      await tx.team.update({
+        where: { id: recipient.teamId },
+        data: { totalPoints: { increment: amount } },
+      });
+    }
 
     await tx.event.create({
       data: {
@@ -231,6 +243,13 @@ export async function revokePoint(pointId: string, facilitatorId: string) {
     if (point.participantId) {
       await tx.sessionParticipant.update({
         where: { id: point.participantId },
+        data: { totalPoints: { decrement: point.amount } },
+      });
+    }
+
+    if (point.teamId) {
+      await tx.team.update({
+        where: { id: point.teamId },
         data: { totalPoints: { decrement: point.amount } },
       });
     }

@@ -95,6 +95,31 @@ export default function ParticipantSessionView() {
           setPeerResponses((prev) => [response, ...prev.filter((r) => r.id !== response.id)]);
         });
 
+        socket.on("team:roster_updated", ({ teams }: { teams: any[] }) => {
+          for (const team of teams) {
+            const member = team.members?.find((m: any) => m.id === partData.id);
+            if (member) {
+              setParticipant((prev: any) => (prev ? { ...prev, team, teamId: team.id } : prev));
+              return;
+            }
+          }
+        });
+
+        socket.on("team:member_reassigned", ({ participantId, teamId }: { participantId: string; teamId: string | null }) => {
+          if (participantId === partData.id) {
+            fetch("/api/sessions/reconnect", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ token: storedToken }),
+            })
+              .then((r) => r.json())
+              .then((data) => {
+                if (data?.id) setParticipant(data);
+              })
+              .catch(console.error);
+          }
+        });
+
         socket.on("timer:updated", ({ timerStatus, timerEndsAt, timerRemainingMs }: any) => {
           setActiveActivity((prev: any) =>
             prev ? { ...prev, timerStatus, timerEndsAt, timerRemainingMs } : prev
@@ -113,6 +138,8 @@ export default function ParticipantSessionView() {
       const socket = getSocket();
       socket.off("activity:state_updated");
       socket.off("response:added");
+      socket.off("team:roster_updated");
+      socket.off("team:member_reassigned");
       socket.off("timer:updated");
     };
   }, [id]);
@@ -262,6 +289,13 @@ export default function ParticipantSessionView() {
         </div>
 
         <div className="flex items-center gap-3">
+          {participant.team && (
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-purple-50 text-purple-800 border border-purple-200 rounded-xl text-xs font-semibold">
+              <Users className="w-3.5 h-3.5 text-purple-600" />
+              <span>{participant.team.name}</span>
+            </div>
+          )}
+
           <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-xs font-semibold">
             <Award className="w-4 h-4 text-amber-600" />
             <span>{participant.totalPoints} pts</span>

@@ -24,6 +24,8 @@ import {
   Eye,
   EyeOff,
   MessageSquare,
+  Shuffle,
+  ArrowRightLeft,
 } from "lucide-react";
 
 export default function FacilitatorDashboard() {
@@ -52,12 +54,18 @@ export default function FacilitatorDashboard() {
   const [newActPrompt, setNewActPrompt] = useState("");
   const [newActReveal, setNewActReveal] = useState("UPON_LOCK");
 
+  // Teams State
+  const [teams, setTeams] = useState<any[]>([]);
+  const [splitCount, setSplitCount] = useState(2);
+  const [splitting, setSplitting] = useState(false);
+
   useEffect(() => {
     async function fetchSessionData() {
       try {
-        const [resSession, resActivities] = await Promise.all([
+        const [resSession, resActivities, resTeams] = await Promise.all([
           fetch(`/api/sessions/${id}`),
           fetch(`/api/sessions/${id}/activities`),
+          fetch(`/api/sessions/${id}/teams`),
         ]);
 
         if (!resSession.ok) throw new Error("Failed to load session");
@@ -77,6 +85,11 @@ export default function FacilitatorDashboard() {
             loadResponses(current.id);
           }
         }
+
+        if (resTeams.ok) {
+          const teamsData = await resTeams.json();
+          setTeams(teamsData);
+        }
       } catch (err) {
         console.error(err);
       } finally {
@@ -93,12 +106,30 @@ export default function FacilitatorDashboard() {
       setParticipants(data.participants);
     });
 
+    socket.on("team:roster_updated", ({ teams }: { teams: any[] }) => {
+      setTeams(teams);
+    });
+
+    socket.on("team:member_reassigned", async () => {
+      const [tRes, pRes] = await Promise.all([
+        fetch(`/api/sessions/${id}/teams`),
+        fetch(`/api/sessions/${id}`),
+      ]);
+      if (tRes.ok) setTeams(await tRes.json());
+      if (pRes.ok) {
+        const sData = await pRes.json();
+        setParticipants(sData.participants || []);
+      }
+    });
+
     socket.on("response:added", ({ response }: { response: any }) => {
       setResponses((prev) => [response, ...prev.filter((r) => r.id !== response.id)]);
     });
 
     return () => {
       socket.off("session:roster_updated");
+      socket.off("team:roster_updated");
+      socket.off("team:member_reassigned");
       socket.off("response:added");
     };
   }, [id]);
@@ -240,6 +271,46 @@ export default function FacilitatorDashboard() {
         setResponses((prev) =>
           prev.map((r) => (r.id === responseId ? { ...r, isHidden: !currentHidden } : r))
         );
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAutoSplit = async () => {
+    if (splitting) return;
+    setSplitting(true);
+    try {
+      const res = await fetch(`/api/sessions/${id}/teams`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teamCount: splitCount }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTeams(data);
+        const socket = getSocket();
+        socket.emit("team:split", { sessionId: id, teams: data });
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSplitting(false);
+    }
+  };
+
+  const handleReassign = async (participantId: string, targetTeamId: string | null) => {
+    try {
+      const res = await fetch(`/api/participants/${participantId}/team`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teamId: targetTeamId }),
+      });
+      if (res.ok) {
+        const socket = getSocket();
+        socket.emit("team:member_moved", { sessionId: id, participantId, teamId: targetTeamId });
+        const tRes = await fetch(`/api/sessions/${id}/teams`);
+        if (tRes.ok) setTeams(await tRes.json());
       }
     } catch (err) {
       console.error(err);
@@ -645,6 +716,93 @@ export default function FacilitatorDashboard() {
                       <span className="text-sm font-medium text-slate-800">{p.displayName}</span>
                     </div>
                     <span className="text-xs text-slate-400 font-mono">{p.totalPoints} pts</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Teams & Breakouts */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                <Shuffle className="w-5 h-5 text-indigo-600" />
+                Teams & Breakouts
+              </h2>
+              <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-indigo-50 text-indigo-700">
+                {teams.length} Teams
+              </span>
+            </div>
+
+            {/* Split controls */}
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 mb-4 flex items-center gap-2">
+              <span className="text-xs text-slate-600 font-medium whitespace-nowrap">Teams:</span>
+              <input
+                type="number"
+                min={2}
+                max={10}
+                value={splitCount}
+                onChange={(e) => setSplitCount(Math.max(2, parseInt(e.target.value) || 2))}
+                className="w-16 px-2 py-1 text-xs border border-slate-300 rounded-lg text-slate-900 bg-white"
+              />
+              <button
+                onClick={handleAutoSplit}
+                disabled={splitting || participants.length === 0}
+                className="flex-1 py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                {splitting ? "Splitting..." : "Auto-Split"}
+              </button>
+            </div>
+
+            {/* Teams List */}
+            {teams.length === 0 ? (
+              <div className="text-center py-6 text-slate-400 text-xs">
+                No teams created yet. Use auto-split above to divide participants into groups.
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                {teams.map((team) => (
+                  <div key={team.id} className="p-3 rounded-xl border border-slate-200 bg-slate-50/50">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                        <span className="text-xs font-bold text-slate-800">{team.name}</span>
+                        <span className="text-[10px] text-slate-400">({team.members?.length || 0})</span>
+                      </div>
+                      <span className="text-xs font-mono font-semibold text-indigo-600">
+                        {team.totalPoints} pts
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {team.members?.map((m: any) => (
+                        <div
+                          key={m.id}
+                          className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-100 text-xs"
+                        >
+                          <span className="text-slate-700 truncate max-w-[120px]">{m.displayName}</span>
+                          <select
+                            value={team.id}
+                            onChange={(e) => handleReassign(m.id, e.target.value === "none" ? null : e.target.value)}
+                            className="text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-slate-600 focus:outline-none"
+                          >
+                            <option value={team.id}>Move...</option>
+                            {teams
+                              .filter((t) => t.id !== team.id)
+                              .map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  to {t.name}
+                                </option>
+                              ))}
+                            <option value="none">Remove</option>
+                          </select>
+                        </div>
+                      ))}
+                      {(!team.members || team.members.length === 0) && (
+                        <p className="text-[11px] text-slate-400 italic">No members</p>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

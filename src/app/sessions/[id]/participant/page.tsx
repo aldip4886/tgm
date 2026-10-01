@@ -13,6 +13,9 @@ import {
   Send,
   Lock,
   CheckCircle2,
+  ThumbsUp,
+  MessageCircle,
+  Plus,
 } from "lucide-react";
 
 export default function ParticipantSessionView() {
@@ -31,6 +34,7 @@ export default function ParticipantSessionView() {
   const [responseInput, setResponseInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [peerResponses, setPeerResponses] = useState<any[]>([]);
+  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     async function initParticipant() {
@@ -163,6 +167,65 @@ export default function ParticipantSessionView() {
     }
   };
 
+  const handleLike = async (responseId: string) => {
+    try {
+      const res = await fetch(`/api/responses/${responseId}/reactions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (res.ok) {
+        if (activeActivity) loadActivityResponses(activeActivity.id, token);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAwardPoints = async (responseId: string, amount: number) => {
+    try {
+      const res = await fetch(`/api/responses/${responseId}/points`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ amount }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Failed to award points");
+        return;
+      }
+      const data = await res.json();
+      setParticipant((prev: any) => ({ ...prev, peerPointBudget: data.remainingBudget }));
+      if (activeActivity) loadActivityResponses(activeActivity.id, token);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleAddComment = async (responseId: string, content: string) => {
+    if (!content.trim()) return;
+    try {
+      const res = await fetch(`/api/responses/${responseId}/comments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: content.trim() }),
+      });
+      if (res.ok) {
+        if (activeActivity) loadActivityResponses(activeActivity.id, token);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
@@ -288,20 +351,108 @@ export default function ParticipantSessionView() {
                   Participant Contributions ({peerResponses.length})
                 </h3>
 
-                <div className="space-y-3">
-                  {peerResponses.map((r) => (
-                    <div key={r.id} className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-slate-700">
-                          {r.participant?.displayName || "Participant"}
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          {new Date(r.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        </span>
+                <div className="space-y-4">
+                  {peerResponses.map((r) => {
+                    const isMine = r.participantId === participant?.id;
+                    const likeCount = r.reactions?.filter((rx: any) => rx.type === "LIKE").length || 0;
+                    const hasLiked = r.reactions?.some(
+                      (rx: any) => rx.type === "LIKE" && rx.participantId === participant?.id
+                    );
+                    const comments = r.comments || [];
+                    const currentComment = commentInputs[r.id] || "";
+
+                    return (
+                      <div key={r.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-bold text-slate-800">
+                            {r.participant?.displayName || "Participant"} {isMine && <span className="text-[10px] text-indigo-600 font-semibold">(You)</span>}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {new Date(r.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-800 mb-3">{r.content}</p>
+
+                        {/* Interaction Bar */}
+                        <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            {/* Like Button */}
+                            <button
+                              onClick={() => handleLike(r.id)}
+                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                                hasLiked
+                                  ? "bg-indigo-600 text-white"
+                                  : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                              }`}
+                            >
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                              <span>{likeCount}</span>
+                            </button>
+
+                            {/* Peer Points Gift Buttons */}
+                            {!isMine && (
+                              <div className="flex items-center gap-1">
+                                {[1, 3, 5].map((pts) => (
+                                  <button
+                                    key={pts}
+                                    disabled={participant.peerPointBudget < pts}
+                                    onClick={() => handleAwardPoints(r.id, pts)}
+                                    title={`Award +${pts} points from your peer budget`}
+                                    className="px-2 py-1 bg-white hover:bg-amber-50 text-amber-800 border border-slate-200 hover:border-amber-300 rounded-lg text-[11px] font-bold transition disabled:opacity-30 disabled:pointer-events-none"
+                                  >
+                                    +{pts}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <span className="text-[11px] text-slate-400 font-medium">
+                            {comments.length} {comments.length === 1 ? "comment" : "comments"}
+                          </span>
+                        </div>
+
+                        {/* Threaded Comments Section */}
+                        {comments.length > 0 && (
+                          <div className="mt-3 pt-2 border-t border-slate-200 space-y-1.5 pl-3 border-l-2 border-indigo-200">
+                            {comments.map((c: any) => (
+                              <div key={c.id} className="text-xs">
+                                <span className="font-bold text-slate-700 mr-1.5">{c.participant?.displayName}:</span>
+                                <span className="text-slate-600">{c.content}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Add Comment Input */}
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleAddComment(r.id, currentComment);
+                            setCommentInputs((prev) => ({ ...prev, [r.id]: "" }));
+                          }}
+                          className="mt-3 flex gap-2"
+                        >
+                          <input
+                            type="text"
+                            value={currentComment}
+                            onChange={(e) =>
+                              setCommentInputs((prev) => ({ ...prev, [r.id]: e.target.value }))
+                            }
+                            placeholder="Write a peer comment..."
+                            className="flex-1 px-3 py-1.5 text-xs bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!currentComment.trim()}
+                            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg transition disabled:opacity-40"
+                          >
+                            Reply
+                          </button>
+                        </form>
                       </div>
-                      <p className="text-xs text-slate-800">{r.content}</p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

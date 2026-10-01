@@ -1,0 +1,39 @@
+import { NextRequest, NextResponse } from "next/server";
+import { awardPeerPoints } from "@/services/peer-interaction.service";
+import { verifyParticipantToken } from "@/lib/auth";
+import { z } from "zod";
+
+const pointSchema = z.object({
+  amount: z.number().int().positive().default(1),
+  reason: z.string().optional(),
+});
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const authHeader = req.headers.get("authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const token = authHeader.substring(7);
+    const payload = await verifyParticipantToken(token);
+
+    const body = await req.json();
+    const validated = pointSchema.parse(body);
+
+    const result = await awardPeerPoints(
+      params.id,
+      payload.participantId,
+      validated.amount,
+      validated.reason
+    );
+    return NextResponse.json(result, { status: 201 });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Failed to award peer points" },
+      { status: 400 }
+    );
+  }
+}

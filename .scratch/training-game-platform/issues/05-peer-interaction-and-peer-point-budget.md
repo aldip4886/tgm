@@ -5,12 +5,12 @@ Participants can interact with unlocked peer responses by liking (with duplicate
 
 **Blocked by:** 03: Open Question Activity & Configurable Response Reveal
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Participants can like a response, with client deduplication preventing repeated likes from the same participant
-- [ ] Participants can add threaded comments to responses, updating peer feeds in real time
-- [ ] Each participant receives a dedicated peerPointBudget (configured by facilitator)
-- [ ] Participants can award points to a peer response with an optional reason, deducting from their budget
-- [ ] Point award increases recipient's total score in the points ledger
-- [ ] Facilitator can delete comments and revoke awarded points
-- [ ] All likes, comments, and point actions are captured in the event log
+- [x] Participants can like a response, with client deduplication preventing repeated likes from the same participant
+- [x] Participants can add threaded comments to responses, updating peer feeds in real time
+- [x] Each participant receives a dedicated peerPointBudget (configured by facilitator)
+- [x] Participants can award points to a peer response with an optional reason, deducting from their budget
+- [x] Point award increases recipient's total score in the points ledger
+- [x] Facilitator can delete comments and revoke awarded points
+- [x] All likes, comments, and point actions are captured in the event log

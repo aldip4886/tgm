@@ -73,7 +73,21 @@ async function seed() {
     });
 
     if (existing) {
-      console.log(`User ${u.username} already exists, skipping.`);
+      if (!existing.username || !existing.password) {
+        const { hashPassword } = await import("../src/services/user.service");
+        await prisma.user.update({
+          where: { id: existing.id },
+          data: {
+            username: u.username,
+            password: hashPassword(u.password),
+            name: u.name,
+            role: u.role,
+          },
+        });
+        console.log(`Updated existing user record for ${u.username}`);
+      } else {
+        console.log(`User ${u.username} already exists, skipping.`);
+      }
     } else {
       await createUser(u, "SUPER_ADMIN");
       console.log(`Created ${u.role}: ${u.username}`);

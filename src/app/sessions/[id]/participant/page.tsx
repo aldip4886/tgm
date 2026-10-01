@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/lib/socket-client";
 import { DigitalTimer } from "@/components/DigitalTimer";
@@ -45,6 +45,11 @@ export default function ParticipantSessionView() {
 
   // Activity & Responses State
   const [activeActivity, setActiveActivity] = useState<any>(null);
+  const activeActivityRef = useRef<any>(null);
+  useEffect(() => {
+    activeActivityRef.current = activeActivity;
+  }, [activeActivity]);
+
   const [myResponse, setMyResponse] = useState<any>(null);
   const [responseInput, setResponseInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -64,15 +69,32 @@ export default function ParticipantSessionView() {
   const [badges, setBadges] = useState<any[]>([]);
   const [celebratingBadge, setCelebratingBadge] = useState<{ badge: any; reason?: string } | null>(null);
 
-  // Pop-up Award Notification State (Points & Comments)
+  // Pop-up Award Notification State (Points, Comments, & Likes)
+  const seenNotificationIds = useRef<Set<string>>(new Set());
   const [awardedNotification, setAwardedNotification] = useState<{
-    type: "POINTS" | "COMMENT";
+    type: "POINTS" | "COMMENT" | "LIKE";
     amount?: number;
     reason?: string;
     giverName?: string;
     commenterName?: string;
     content?: string;
   } | null>(null);
+
+  const triggerNotification = (notif: {
+    notificationId?: string;
+    type: "POINTS" | "COMMENT" | "LIKE";
+    amount?: number;
+    reason?: string;
+    giverName?: string;
+    commenterName?: string;
+    content?: string;
+  }) => {
+    if (notif.notificationId) {
+      if (seenNotificationIds.current.has(notif.notificationId)) return;
+      seenNotificationIds.current.add(notif.notificationId);
+    }
+    setAwardedNotification(notif);
+  };
 
   // Projected Work & Inspection State
   const [projectedWork, setProjectedWork] = useState<any | null>(null);
@@ -114,10 +136,11 @@ export default function ParticipantSessionView() {
           const current = actData.find((a: any) => a.state === "ACTIVE" || a.state === "LOCKED");
           if (current) {
             setActiveActivity(current);
+            activeActivityRef.current = current;
             if (current.type?.startsWith("WHITEBOARD")) {
               loadWhiteboard(current.id, partData.id, partData.teamId);
             } else {
-              loadActivityResponses(current.id, storedToken);
+              loadActivityResponses(current.id, storedToken, partData.id);
             }
           }
         }
@@ -127,7 +150,12 @@ export default function ParticipantSessionView() {
         if (lbRes.ok) {
           const lbData = await lbRes.json();
           setLeaderboardData({ participants: lbData.participants, teams: lbData.teams });
-          if (lbData.visibility) setLeaderboardVisibility(lbData.visibility);
+          if (lbData.visibility) {
+            setLeaderboardVisibility(lbData.visibility);
+            if (lbData.visibility === "LIVE") {
+              setShowLeaderboard(true);
+            }
+          }
         }
 
         // Fetch participant badges
@@ -150,13 +178,15 @@ export default function ParticipantSessionView() {
         socket.on("activity:state_updated", ({ activity }: { activity: any }) => {
           if (activity.state === "ACTIVE" || activity.state === "LOCKED") {
             setActiveActivity(activity);
+            activeActivityRef.current = activity;
             if (activity.type?.startsWith("WHITEBOARD")) {
               loadWhiteboard(activity.id, partData.id, partData.teamId);
             } else {
-              loadActivityResponses(activity.id, storedToken);
+              loadActivityResponses(activity.id, storedToken, partData.id);
             }
           } else {
             setActiveActivity(null);
+            activeActivityRef.current = null;
             setMyResponse(null);
             setPeerResponses([]);
             setMyWhiteboard(null);
@@ -200,6 +230,9 @@ export default function ParticipantSessionView() {
 
         socket.on("leaderboard:visibility_updated", ({ visibility }: any) => {
           setLeaderboardVisibility(visibility);
+          if (visibility === "LIVE") {
+            setShowLeaderboard(true);
+          }
           loadLeaderboard();
         });
 
@@ -218,9 +251,10 @@ export default function ParticipantSessionView() {
         });
 
         // Pop-up when points awarded by facilitator or peer
-        socket.on("point:awarded_notification", ({ recipientId, amount, reason, giverName }: any) => {
+        socket.on("point:awarded_notification", ({ notificationId, recipientId, amount, reason, giverName }: any) => {
           if (recipientId === partData.id) {
-            setAwardedNotification({
+            triggerNotification({
+              notificationId,
               type: "POINTS",
               amount,
               reason,
@@ -240,14 +274,34 @@ export default function ParticipantSessionView() {
           }
         });
 
-        // Pop-up when comment received
-        socket.on("comment:received_notification", ({ recipientId, commenterName, content }: any) => {
+        // Pop-up when comment received from facilitator or peer
+        socket.on("comment:received_notification", ({ notificationId, recipientId, commenterName, content, reason }: any) => {
           if (recipientId === partData.id) {
-            setAwardedNotification({
+            triggerNotification({
+              notificationId,
               type: "COMMENT",
               commenterName: commenterName || "A peer",
-              content,
+              content: content || reason,
+              reason: reason || content,
             });
+            if (activeActivityRef.current) {
+              loadActivityResponses(activeActivityRef.current.id, storedToken, partData.id);
+            }
+          }
+        });
+
+        // Pop-up when like received from facilitator or peer
+        socket.on("like:received_notification", ({ notificationId, recipientId, giverName, reason }: any) => {
+          if (recipientId === partData.id) {
+            triggerNotification({
+              notificationId,
+              type: "LIKE",
+              giverName: giverName || "A peer",
+              reason: reason || "Liked your submission!",
+            });
+            if (activeActivityRef.current) {
+              loadActivityResponses(activeActivityRef.current.id, storedToken, partData.id);
+            }
           }
         });
 
@@ -308,8 +362,9 @@ export default function ParticipantSessionView() {
         socket.on("response:projected", async ({ responseId }: { responseId: string }) => {
           if (responseId) {
             try {
-              if (activeActivity) {
-                const rRes = await fetch(`/api/activities/${activeActivity.id}/responses`, {
+              const currentAct = activeActivityRef.current;
+              if (currentAct) {
+                const rRes = await fetch(`/api/activities/${currentAct.id}/responses`, {
                   headers: { Authorization: `Bearer ${storedToken}` },
                 });
                 if (rRes.ok) {
@@ -342,8 +397,8 @@ export default function ParticipantSessionView() {
 
         // Reload responses when any whiteboard is submitted
         socket.on("whiteboard:submitted", () => {
-          if (activeActivity) {
-            loadActivityResponses(activeActivity.id, storedToken);
+          if (activeActivityRef.current) {
+            loadActivityResponses(activeActivityRef.current.id, storedToken, partData.id);
           }
         });
       } catch (err: any) {
@@ -367,11 +422,12 @@ export default function ParticipantSessionView() {
       socket.off("leaderboard:scores_updated");
       socket.off("point:awarded_notification");
       socket.off("comment:received_notification");
+      socket.off("like:received_notification");
       socket.off("whiteboard:projected");
       socket.off("response:projected");
       socket.off("whiteboard:submitted");
     };
-  }, [id, activeActivity]);
+  }, [id]);
 
   const loadBadges = async (partId: string) => {
     try {
@@ -412,7 +468,7 @@ export default function ParticipantSessionView() {
     }
   };
 
-  const loadActivityResponses = async (activityId: string, authToken: string) => {
+  const loadActivityResponses = async (activityId: string, authToken: string, currentPartId?: string) => {
     try {
       const res = await fetch(`/api/activities/${activityId}/responses`, {
         headers: { Authorization: `Bearer ${authToken}` },
@@ -420,7 +476,8 @@ export default function ParticipantSessionView() {
       if (res.ok) {
         const data = await res.json();
         setPeerResponses(data);
-        const mine = data.find((r: any) => r.participantId === participant?.id);
+        const targetPartId = currentPartId || participant?.id;
+        const mine = data.find((r: any) => r.participantId === targetPartId);
         if (mine) setMyResponse(mine);
       }
     } catch (err) {
@@ -473,17 +530,41 @@ export default function ParticipantSessionView() {
     }
   };
 
-  const handleLike = async (responseId: string) => {
+  const handleLike = async (responseId: string, customReason?: string) => {
     try {
+      const targetResp = peerResponses.find((r) => r.id === responseId);
+      const reasonText =
+        customReason?.trim() ||
+        pointReasonInputs[responseId]?.trim() ||
+        (targetResp?.content && targetResp?.color !== "WHITEBOARD"
+          ? `Liked your response: "${targetResp.content.slice(0, 60)}"`
+          : "Liked your submission!");
+
       const res = await fetch(`/api/responses/${responseId}/reactions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
+        body: JSON.stringify({
+          type: "LIKE",
+          reason: reasonText,
+        }),
       });
       if (res.ok) {
+        const data = await res.json();
         if (activeActivity) loadActivityResponses(activeActivity.id, token);
+        if (data.reacted && data.recipientId && data.recipientId !== participant?.id) {
+          const socket = getSocket();
+          socket.emit("like:add", {
+            sessionId: id,
+            notificationId: data.reactionId,
+            recipientId: data.recipientId,
+            giverName: participant?.displayName || "A peer",
+            reason: reasonText,
+            responseId,
+          });
+        }
       }
     } catch (err) {
       console.error(err);
@@ -511,7 +592,14 @@ export default function ParticipantSessionView() {
       setPointReasonInputs((prev) => ({ ...prev, [responseId]: "" }));
       if (activeActivity) loadActivityResponses(activeActivity.id, token);
       const socket = getSocket();
-      socket.emit("leaderboard:points_awarded", { sessionId: id });
+      socket.emit("point:award", {
+        sessionId: id,
+        notificationId: data.point?.id,
+        recipientId: data.recipientId,
+        amount,
+        reason: reason?.trim() || "Recognized by a peer for great contribution!",
+        giverName: participant?.displayName || "A peer",
+      });
 
       if (data.newBadges && data.newBadges.length > 0) {
         for (const b of data.newBadges) {
@@ -540,10 +628,34 @@ export default function ParticipantSessionView() {
         body: JSON.stringify({ content: content.trim() }),
       });
       if (res.ok) {
+        const newComment = await res.json();
         if (activeActivity) loadActivityResponses(activeActivity.id, token);
+        const recipientId =
+          newComment.response?.participantId ||
+          peerResponses.find((r) => r.id === responseId)?.participantId;
+        if (recipientId && recipientId !== participant?.id) {
+          const socket = getSocket();
+          socket.emit("comment:add", {
+            sessionId: id,
+            notificationId: newComment.id,
+            recipientId,
+            commenterName: participant?.displayName || "A peer",
+            content: newComment.content,
+            reason: newComment.content,
+            responseId,
+          });
+        }
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleToggleLeaderboard = () => {
+    const nextState = !showLeaderboard;
+    setShowLeaderboard(nextState);
+    if (nextState) {
+      loadLeaderboard();
     }
   };
 
@@ -574,7 +686,7 @@ export default function ParticipantSessionView() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       {/* Top Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-base font-bold text-slate-900">{session?.title}</h1>
           <p className="text-xs text-slate-500">
@@ -582,16 +694,19 @@ export default function ParticipantSessionView() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {leaderboardVisibility !== "HIDDEN" && (
-            <button
-              onClick={() => setShowLeaderboard(!showLeaderboard)}
-              className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-xs font-semibold hover:bg-amber-100 transition shadow-sm"
-            >
-              <Trophy className="w-3.5 h-3.5 text-amber-600" />
-              <span>Standings</span>
-            </button>
-          )}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={handleToggleLeaderboard}
+            className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-xl text-xs font-semibold transition shadow-sm ${
+              showLeaderboard
+                ? "bg-amber-500 text-white border-amber-600"
+                : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+            }`}
+            title="View Session Leaderboard"
+          >
+            <Trophy className={`w-3.5 h-3.5 ${showLeaderboard ? "text-white" : "text-amber-600"}`} />
+            <span>Leaderboard</span>
+          </button>
 
           {participant.team && (
             <div className="flex items-center gap-1.5 px-3 py-1 bg-purple-50 text-purple-800 border border-purple-200 rounded-xl text-xs font-semibold">
@@ -1110,26 +1225,73 @@ export default function ParticipantSessionView() {
             </div>
           </div>
         )}
+      </main>
 
-        {/* Leaderboard View: Placed at the VERY BOTTOM of the participant page */}
-        {(showLeaderboard || leaderboardVisibility === "LIVE") && (
-          <div id="session-leaderboard" className="pt-6 border-t border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-300">
-            <div className="flex items-center justify-between mb-3 px-1">
-              <div className="flex items-center gap-2">
-                <Trophy className="w-5 h-5 text-amber-500" />
-                <h3 className="text-sm font-bold text-slate-800">Session Standings</h3>
+      {/* Floating Leaderboard Quick Button (bottom-right) */}
+      {!showLeaderboard && (
+        <button
+          type="button"
+          onClick={handleToggleLeaderboard}
+          className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-full font-bold text-xs shadow-xl shadow-amber-500/30 border border-amber-300/60 transition-all hover:scale-105"
+          title="Open Floating Leaderboard"
+        >
+          <Trophy className="w-4 h-4" />
+          <span>Leaderboard</span>
+          <span className="px-2 py-0.5 bg-black/20 rounded-full font-mono text-[11px]">
+            {participant.totalPoints} pts
+          </span>
+        </button>
+      )}
+
+      {/* Floating Leaderboard Window */}
+      {showLeaderboard && (
+        <div
+          id="session-leaderboard"
+          className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-40 w-[calc(100vw-2rem)] sm:w-[440px] max-h-[80vh] bg-white rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200"
+        >
+          {/* Floating Window Header */}
+          <div className="px-5 py-3.5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center">
+                <Trophy className="w-4 h-4 text-amber-400" />
               </div>
-              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                {leaderboardVisibility === "LIVE" ? "Live Updates" : "Revealed by Host"}
-              </span>
+              <div>
+                <h3 className="text-sm font-bold leading-tight">Live Standings</h3>
+                <span className="text-[10px] font-semibold text-amber-300 uppercase tracking-wider flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  {leaderboardVisibility === "LIVE" ? "Live Streamed" : "Session Leaderboard"}
+                </span>
+              </div>
             </div>
+
+            <div className="flex items-center gap-2">
+              <div className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/10 text-right">
+                <span className="block text-[9px] uppercase text-slate-300 font-semibold">Your Score</span>
+                <span className="font-mono text-xs font-extrabold text-amber-300">
+                  {participant.totalPoints} pts
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLeaderboard(false)}
+                className="p-1.5 text-slate-300 hover:text-white rounded-xl hover:bg-white/10 transition"
+                title="Close Floating Leaderboard"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Scrollable Leaderboard Body */}
+          <div className="p-4 overflow-y-auto flex-1 bg-slate-50/60">
             <LeaderboardView
               participants={leaderboardData.participants}
               teams={leaderboardData.teams}
+              compact={true}
             />
           </div>
-        )}
-      </main>
+        </div>
+      )}
 
       {/* Pop-up Award Notification Modal (Points & Comments) */}
       {awardedNotification && (

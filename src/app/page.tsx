@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sparkles, Users, Presentation, ArrowRight } from "lucide-react";
@@ -20,6 +20,18 @@ export default function HomePage() {
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlCode = params.get("code");
+      if (urlCode) {
+        const cleaned = urlCode.trim().toUpperCase().slice(0, 6);
+        setCode(cleaned);
+        setLoginSessionCode(cleaned);
+      }
+    }
+  }, []);
 
   const handleGuestJoin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,11 +90,20 @@ export default function HomePage() {
         throw new Error(data.error || "Invalid credentials");
       }
 
+      if (data.userToken && data.user) {
+        localStorage.setItem("tgms_user_token", data.userToken);
+        localStorage.setItem("tgms_user", JSON.stringify(data.user));
+      }
+
       if (data.session && data.token) {
         localStorage.setItem(`tgms_token_${data.session.id}`, data.token);
         localStorage.setItem("tgms_last_session", data.session.id);
         router.push(`/sessions/${data.session.id}/participant`);
-      } else if (data.user?.role === "FACILITATOR" || data.user?.role === "ADMIN") {
+      } else if (
+        data.user?.role === "FACILITATOR" ||
+        data.user?.role === "ADMIN" ||
+        data.user?.role === "SUPER_ADMIN"
+      ) {
         router.push("/users");
       } else {
         setError("Login successful, but please enter a valid Session Code to join.");

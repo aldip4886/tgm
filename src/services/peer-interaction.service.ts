@@ -4,7 +4,8 @@ import { evaluateAutomaticBadges } from "./badge.service";
 export async function toggleReaction(
   responseId: string,
   participantId: string,
-  type: string = "LIKE"
+  type: string = "LIKE",
+  reason?: string
 ) {
   return await prisma.$transaction(async (tx) => {
     const existing = await tx.reaction.findUnique({
@@ -19,11 +20,16 @@ export async function toggleReaction(
 
     const response = await tx.response.findUnique({
       where: { id: responseId },
-      include: { activity: true },
+      include: { activity: true, participant: true },
     });
     if (!response) throw new Error("Response not found");
 
+    const giver = await tx.sessionParticipant.findUnique({
+      where: { id: participantId },
+    });
+
     let reacted = false;
+    let reactionId: string | undefined = undefined;
     if (existing) {
       await tx.reaction.delete({
         where: { id: existing.id },
@@ -40,13 +46,14 @@ export async function toggleReaction(
       });
       reacted = false;
     } else {
-      await tx.reaction.create({
+      const created = await tx.reaction.create({
         data: {
           responseId,
           participantId,
           type,
         },
       });
+      reactionId = created.id;
       await tx.event.create({
         data: {
           sessionId: response.activity.sessionId,
@@ -54,7 +61,7 @@ export async function toggleReaction(
           actorId: participantId,
           targetId: responseId,
           eventType: "LIKE_ADDED",
-          metadata: JSON.stringify({ type }),
+          metadata: JSON.stringify({ type, reason: reason?.trim() || undefined }),
         },
       });
       reacted = true;
@@ -64,7 +71,15 @@ export async function toggleReaction(
       where: { responseId, type },
     });
 
-    return { reacted, count };
+    return {
+      reacted,
+      count,
+      reactionId,
+      recipientId: response.participantId,
+      sessionId: response.activity.sessionId,
+      giverName: giver?.displayName || "A peer",
+      reason: reason?.trim() || undefined,
+    };
   });
 }
 

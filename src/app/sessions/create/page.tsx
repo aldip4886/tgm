@@ -32,7 +32,11 @@ export default function CreateSessionPage() {
     if (token && rawUser) {
       try {
         const parsed = JSON.parse(rawUser);
-        if (parsed.role === "FACILITATOR" || parsed.role === "ADMIN") {
+        if (
+          parsed.role === "FACILITATOR" ||
+          parsed.role === "ADMIN" ||
+          parsed.role === "SUPER_ADMIN"
+        ) {
           setCurrentUser(parsed);
           setUserToken(token);
           setFacilitatorName(parsed.name || "");

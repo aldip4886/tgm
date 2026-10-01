@@ -8,6 +8,8 @@ export interface CreateSessionInput {
   description?: string;
   facilitatorName: string;
   facilitatorEmail: string;
+  facilitatorId?: string;
+  facilitatorUsername?: string;
 }
 
 export async function createSession(input: CreateSessionInput) {
@@ -27,15 +29,34 @@ export async function createSession(input: CreateSessionInput) {
 
   return await prisma.$transaction(async (tx) => {
     // Ensure facilitator user exists atomically inside transaction
-    const facilitator = await tx.user.upsert({
-      where: { email: input.facilitatorEmail },
-      update: { name: input.facilitatorName },
-      create: {
-        email: input.facilitatorEmail,
-        name: input.facilitatorName,
-        role: "FACILITATOR",
-      },
-    });
+    let facilitator = null;
+    if (input.facilitatorId) {
+      facilitator = await tx.user.findUnique({ where: { id: input.facilitatorId } });
+    }
+    if (!facilitator && input.facilitatorUsername) {
+      facilitator = await tx.user.findUnique({ where: { username: input.facilitatorUsername } });
+    }
+    if (!facilitator && input.facilitatorEmail) {
+      facilitator = await tx.user.findUnique({ where: { email: input.facilitatorEmail } });
+    }
+
+    if (facilitator) {
+      facilitator = await tx.user.update({
+        where: { id: facilitator.id },
+        data: {
+          name: input.facilitatorName || facilitator.name,
+        },
+      });
+    } else {
+      facilitator = await tx.user.create({
+        data: {
+          email: input.facilitatorEmail,
+          name: input.facilitatorName,
+          username: input.facilitatorUsername || undefined,
+          role: "FACILITATOR",
+        },
+      });
+    }
 
     const session = await tx.session.create({
       data: {

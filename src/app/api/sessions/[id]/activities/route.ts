@@ -5,22 +5,23 @@ import { verifyFacilitatorAuth } from "@/lib/auth";
 import { z } from "zod";
 
 const createActivitySchema = z.object({
-  title: z.string().min(2, "Title is required"),
-  prompt: z.string().min(3, "Prompt is required"),
+  title: z.string().min(1, "Title is required"),
+  prompt: z.string().min(1, "Prompt is required"),
   type: z.string().optional(),
   config: z.string().optional(),
   revealMode: z.enum(["UPON_LOCK", "IMMEDIATE"]).optional(),
-  presentationSlide: z.number().int().positive().optional(),
+  presentationSlide: z.number().int().min(1).optional(),
   timerSeconds: z.number().int().positive().optional(),
 });
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
+    const { id } = await params;
     const activities = await prisma.activity.findMany({
-      where: { sessionId: params.id },
+      where: { sessionId: id },
       orderBy: { orderIndex: "asc" },
       include: {
         responses: {

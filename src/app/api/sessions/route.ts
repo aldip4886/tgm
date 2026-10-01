@@ -24,7 +24,9 @@ export async function POST(req: NextRequest) {
     const validated = createSessionSchema.parse(body);
     const session = await createSession({
       ...validated,
-      facilitatorName: authUser ? authUser.username || validated.facilitatorName : validated.facilitatorName,
+      facilitatorId: authUser?.userId,
+      facilitatorUsername: authUser?.username,
+      facilitatorName: validated.facilitatorName || authUser?.username || "Facilitator",
       facilitatorEmail: authUser?.email || validated.facilitatorEmail,
     });
     return NextResponse.json(session, { status: 201 });

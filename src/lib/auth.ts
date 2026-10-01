@@ -74,6 +74,15 @@ export async function verifyFacilitatorAuth(
     token = (req as any).cookies.get("tgms_user_token")?.value;
   }
 
+  if (!token && "url" in req && typeof req.url === "string") {
+    try {
+      const urlObj = new URL(req.url);
+      token = urlObj.searchParams.get("token") || undefined;
+    } catch {
+      // ignore invalid url
+    }
+  }
+
   if (!token) {
     throw new AuthError("Facilitator authentication required. Please sign in.", 401);
   }
@@ -102,12 +111,16 @@ export async function verifyFacilitatorAuth(
 
     // ADMIN and SUPER_ADMIN have global permissions to modify all sessions
     if (payload.role !== "ADMIN" && payload.role !== "SUPER_ADMIN") {
+      const fallbackEmail = payload.username ? `${payload.username}@training.local` : null;
       const isOwner =
         session.facilitatorId === payload.userId ||
         (session.facilitator &&
           (session.facilitator.id === payload.userId ||
             (payload.email && session.facilitator.email === payload.email) ||
-            (payload.username && session.facilitator.username === payload.username)));
+            (fallbackEmail && session.facilitator.email === fallbackEmail) ||
+            (payload.username &&
+              (session.facilitator.username === payload.username ||
+                session.facilitator.name === payload.username))));
 
       if (!isOwner) {
         throw new AuthError("Forbidden: You can only modify sessions you created.", 403);

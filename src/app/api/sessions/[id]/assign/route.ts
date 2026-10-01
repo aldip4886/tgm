@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assignUserToSession } from "@/services/user.service";
+import { verifyFacilitatorAuth } from "@/lib/auth";
 import { z } from "zod";
 
 const assignSchema = z.object({
@@ -10,10 +11,16 @@ const assignSchema = z.object({
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
     const { id: sessionId } = await params;
+    const authHeader = req.headers.get("authorization");
+    const cookieToken = req.cookies.get("tgms_user_token")?.value;
+    if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
+      await verifyFacilitatorAuth(req);
+    }
+
     const body = await req.json();
     const data = assignSchema.parse(body);
 
@@ -26,6 +33,7 @@ export async function POST(
 
     return NextResponse.json(result, { status: 201 });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    const status = err.status || 400;
+    return NextResponse.json({ error: err.message }, { status });
   }
 }

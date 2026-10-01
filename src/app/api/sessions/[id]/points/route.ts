@@ -17,6 +17,7 @@ const schema = z.object({
   amount: z.number().int().positive(),
   reason: z.string().optional(),
   giverId: z.string().optional().nullable(),
+  giverName: z.string().optional(),
   activityId: z.string().optional().nullable(),
 });
 
@@ -29,11 +30,15 @@ export async function POST(
     const body = await req.json();
     const data = schema.parse(body);
 
+    let resolvedGiverName = data.giverName || "Facilitator";
     if (data.category === "FACILITATOR" || data.category === "BONUS" || data.category === "CHALLENGE") {
       const authHeader = req.headers.get("authorization");
       const cookieToken = req.cookies.get("tgms_user_token")?.value;
       if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
-        await verifyFacilitatorAuth(req, id);
+        const authUser = await verifyFacilitatorAuth(req, id);
+        if (!data.giverName && authUser?.username) {
+          resolvedGiverName = `Facilitator (${authUser.username})`;
+        }
       }
     }
 
@@ -53,10 +58,11 @@ export async function POST(
       const io = getIO();
       if (data.participantId) {
         io.to(`session:${id}`).emit("point:awarded_notification", {
+          notificationId: point.id,
           recipientId: data.participantId,
           amount: data.amount,
-          reason: data.reason || "Facilitator points awarded",
-          giverName: "Facilitator",
+          reason: data.reason || `Awarded for ${data.category.toLowerCase()}`,
+          giverName: resolvedGiverName,
         });
       }
       io.to(`session:${id}`).emit("leaderboard:scores_updated");

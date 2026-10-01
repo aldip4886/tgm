@@ -4,18 +4,19 @@ import {
   awardManualBadge,
 } from "@/services/badge.service";
 import { verifyFacilitatorAuth } from "@/lib/auth";
+import { getIO } from "@/lib/socket";
 import { z } from "zod";
 
 const awardSchema = z.object({
-  sessionId: z.string(),
-  badgeId: z.string(),
-  facilitatorId: z.string(),
+  sessionId: z.string().min(1, "sessionId is required"),
+  badgeId: z.string().min(1, "badgeId is required"),
+  facilitatorId: z.string().optional(),
   reason: z.string().optional(),
 });
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
     const { id: participantId } = await params;
@@ -35,7 +36,7 @@ export async function GET(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
     const { id: participantId } = await params;
@@ -44,17 +45,29 @@ export async function POST(
 
     const authHeader = req.headers.get("authorization");
     const cookieToken = req.cookies.get("tgms_user_token")?.value;
+    let authUser: any = null;
     if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
-      await verifyFacilitatorAuth(req, data.sessionId);
+      authUser = await verifyFacilitatorAuth(req, data.sessionId);
     }
 
     const awarded = await awardManualBadge({
       sessionId: data.sessionId,
       participantId,
       badgeId: data.badgeId,
-      facilitatorId: data.facilitatorId,
+      facilitatorId: data.facilitatorId || authUser?.userId || "FACILITATOR",
       reason: data.reason,
     });
+
+    try {
+      const io = getIO();
+      io.to(`session:${data.sessionId}`).emit("badge:celebrate", {
+        participantId,
+        badge: awarded.badge,
+        reason: awarded.reason,
+      });
+    } catch {
+      // Socket.IO may not be initialized in unit test environments
+    }
 
     return NextResponse.json(awarded, { status: 201 });
   } catch (err: any) {

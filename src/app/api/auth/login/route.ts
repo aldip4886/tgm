@@ -19,7 +19,16 @@ export async function POST(req: NextRequest) {
       sessionCode: data.sessionCode,
     });
 
-    return NextResponse.json(result);
+    const response = NextResponse.json(result);
+    if (result.userToken) {
+      response.cookies.set("tgms_user_token", result.userToken, {
+        httpOnly: false,
+        path: "/",
+        maxAge: 60 * 60 * 24 * 7,
+        sameSite: "lax",
+      });
+    }
+    return response;
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 401 });
   }

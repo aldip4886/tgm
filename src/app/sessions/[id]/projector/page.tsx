@@ -10,7 +10,8 @@ import { PollQuizView } from "@/components/interactions/PollQuizView";
 import { WordCloudView } from "@/components/interactions/WordCloudView";
 import { QAView } from "@/components/interactions/QAView";
 import { RankingView } from "@/components/interactions/RankingView";
-import { Presentation, Sparkles, QrCode, Trophy, Activity as ActivityIcon } from "lucide-react";
+import { Presentation, Sparkles, QrCode, Trophy, Activity as ActivityIcon, X } from "lucide-react";
+import QRCode from "qrcode";
 
 export default function ProjectorView() {
   const { id } = useParams<{ id: string }>();
@@ -27,6 +28,8 @@ export default function ProjectorView() {
   });
   const [leaderboardVisibility, setLeaderboardVisibility] = useState("HIDDEN");
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -166,6 +169,21 @@ export default function ProjectorView() {
     }
   }, [currentSlide, session]);
 
+  useEffect(() => {
+    if (!session?.code || typeof window === "undefined") return;
+    const joinUrl = `${window.location.origin}/?code=${session.code}`;
+    QRCode.toDataURL(joinUrl, {
+      width: 320,
+      margin: 2,
+      color: {
+        dark: "#1e1b4b",
+        light: "#ffffff",
+      },
+    })
+      .then((url) => setQrDataUrl(url))
+      .catch((err) => console.error("QR generation failed:", err));
+  }, [session?.code]);
+
   if (loading || !session) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-300">
@@ -237,7 +255,12 @@ export default function ProjectorView() {
             </button>
           )}
 
-          <div className="flex items-center gap-4 bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700">
+          <button
+            type="button"
+            onClick={() => setShowQr(!showQr)}
+            title="Click to show QR Code on screen"
+            className="flex items-center gap-4 bg-slate-800/80 hover:bg-slate-800 px-4 py-2 rounded-xl border border-slate-700 transition cursor-pointer"
+          >
             <div className="text-right">
               <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Join Live</span>
               <span className="font-mono text-base font-bold text-indigo-400 tracking-wider">{session.code}</span>
@@ -245,9 +268,49 @@ export default function ProjectorView() {
             <div className="p-1.5 bg-indigo-600/30 text-indigo-400 rounded-lg">
               <QrCode className="w-5 h-5" />
             </div>
-          </div>
+          </button>
         </div>
       </header>
+
+      {showQr && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+          onClick={() => setShowQr(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-3xl p-8 max-w-sm w-full flex flex-col items-center shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowQr(false)}
+              className="absolute top-4 right-4 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-sm font-bold uppercase tracking-widest text-indigo-400 mb-4">
+              Scan to Join Session
+            </h3>
+            <div className="w-64 h-64 bg-white rounded-2xl p-3 flex items-center justify-center shadow-lg mb-4">
+              {qrDataUrl ? (
+                <img
+                  src={qrDataUrl}
+                  alt={`QR Code for session ${session.code}`}
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <span className="text-xs text-slate-400 font-mono">Generating QR...</span>
+              )}
+            </div>
+            <div className="text-center">
+              <span className="text-xs uppercase text-slate-400 font-semibold block">Session Join Code</span>
+              <span className="font-mono text-3xl font-extrabold text-white tracking-widest mt-1 block">
+                {session.code}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Projector Presentation Area */}
       <main className="flex-1 flex flex-col items-center justify-center p-6 relative">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { getSocket } from "@/lib/socket-client";
 import { CollaborativeWhiteboard } from "@/components/CollaborativeWhiteboard";
 import {
   X,
@@ -70,12 +71,26 @@ export function ProjectedWorkModal({
           "Content-Type": "application/json",
           Authorization: `Bearer ${userToken}`,
         },
-        body: JSON.stringify({ type: "LIKE" }),
+        body: JSON.stringify({
+          type: "LIKE",
+          reason: `Liked your projected work (${work.title || "submission"})`,
+        }),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.reacted) {
           setReactions((prev) => [...prev, { type: "LIKE", participantId: currentParticipant.id }]);
+          if (!isMine && (data.recipientId || work.participantId)) {
+            const socket = getSocket();
+            socket.emit("like:add", {
+              sessionId,
+              notificationId: data.reactionId,
+              recipientId: data.recipientId || work.participantId,
+              giverName: currentParticipant?.displayName || "A peer",
+              reason: data.reason || `Liked your projected work (${work.title || "submission"})`,
+              responseId: targetResponseId,
+            });
+          }
         } else {
           setReactions((prev) =>
             prev.filter(
@@ -115,6 +130,18 @@ export function ProjectedWorkModal({
       setComments((prev) => [...prev, newC]);
       setCommentInput("");
       setSuccessMsg("Comment posted!");
+      if (!isMine && (newC.response?.participantId || work.participantId)) {
+        const socket = getSocket();
+        socket.emit("comment:add", {
+          sessionId,
+          notificationId: newC.id,
+          recipientId: newC.response?.participantId || work.participantId,
+          commenterName: currentParticipant?.displayName || "A peer",
+          content: newC.content,
+          reason: newC.content,
+          responseId: targetResponseId,
+        });
+      }
       setTimeout(() => setSuccessMsg(""), 3000);
     } catch (err: any) {
       setErrorMsg(err.message);
@@ -160,6 +187,15 @@ export function ProjectedWorkModal({
 
       const data = await res.json();
       setSuccessMsg(`Awarded +${amount} points successfully!`);
+      const socket = getSocket();
+      socket.emit("point:award", {
+        sessionId,
+        notificationId: data.point?.id,
+        recipientId: data.recipientId || work.participantId,
+        amount,
+        reason: pointReason.trim() || "Great projected work!",
+        giverName: currentParticipant?.displayName || "A peer",
+      });
       setSelectedPointAmount(null);
       setPointReason("");
       if (onPointsAwarded && typeof data.remainingBudget === "number") {

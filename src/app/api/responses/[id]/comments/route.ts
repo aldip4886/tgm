@@ -10,9 +10,12 @@ const commentSchema = z.object({
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
+    const resolvedParams = await Promise.resolve(params);
+    const responseId = resolvedParams.id;
+
     const authHeader = req.headers.get("authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -24,7 +27,7 @@ export async function POST(
     const validated = commentSchema.parse(body);
 
     const comment = await createComment(
-      params.id,
+      responseId,
       payload.participantId,
       validated.content,
       validated.parentId
@@ -37,10 +40,12 @@ export async function POST(
         if (comment.response.participantId !== payload.participantId) {
           const sessionId = comment.response.participant?.sessionId || payload.sessionId;
           io.to(`session:${sessionId}`).emit("comment:received_notification", {
+            notificationId: comment.id,
             recipientId: comment.response.participantId,
             commenterName: comment.participant?.displayName || "A participant",
             content: comment.content,
-            responseId: params.id,
+            reason: comment.content,
+            responseId,
           });
         }
       }

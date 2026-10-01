@@ -31,7 +31,10 @@ import {
   UserPlus,
   Download,
   ShieldCheck,
+  ThumbsUp,
+  MessageCircle,
 } from "lucide-react";
+import QRCode from "qrcode";
 import { LeaderboardView } from "@/components/LeaderboardView";
 import { PollQuizView } from "@/components/interactions/PollQuizView";
 import { WordCloudView } from "@/components/interactions/WordCloudView";
@@ -43,8 +46,13 @@ export default function FacilitatorDashboard() {
   const [session, setSession] = useState<any>(null);
   const [participants, setParticipants] = useState<any[]>([]);
   const [showQr, setShowQr] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [facilitatorCommentForId, setFacilitatorCommentForId] = useState<string | null>(null);
+  const [facilitatorCommentText, setFacilitatorCommentText] = useState("");
+  const [facilitatorLikeForId, setFacilitatorLikeForId] = useState<string | null>(null);
+  const [facilitatorLikeReason, setFacilitatorLikeReason] = useState("");
 
   // Presentation State
   const [currentSlide, setCurrentSlide] = useState(1);
@@ -122,7 +130,7 @@ export default function FacilitatorDashboard() {
     if (token && rawUser) {
       try {
         const parsed = JSON.parse(rawUser);
-        if (parsed.role === "FACILITATOR" || parsed.role === "ADMIN") {
+        if (parsed.role === "FACILITATOR" || parsed.role === "ADMIN" || parsed.role === "SUPER_ADMIN") {
           setCurrentUser(parsed);
           setUserToken(token);
         } else {
@@ -135,6 +143,21 @@ export default function FacilitatorDashboard() {
       setShowLoginModal(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (!session?.code || typeof window === "undefined") return;
+    const joinUrl = `${window.location.origin}/?code=${session.code}`;
+    QRCode.toDataURL(joinUrl, {
+      width: 256,
+      margin: 2,
+      color: {
+        dark: "#1e1b4b",
+        light: "#ffffff",
+      },
+    })
+      .then((url) => setQrDataUrl(url))
+      .catch((err) => console.error("QR generation failed:", err));
+  }, [session?.code]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -337,6 +360,9 @@ export default function FacilitatorDashboard() {
   const handleAwardPoints = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!awardTargetParticipant || awardAmount <= 0) return;
+    const facilitatorGiverName = currentUser?.name || currentUser?.username
+      ? `Facilitator (${currentUser.name || currentUser.username})`
+      : "Facilitator";
     try {
       const res = await fetch(`/api/sessions/${id}/points`, {
         method: "POST",
@@ -346,15 +372,25 @@ export default function FacilitatorDashboard() {
           category: awardCategory,
           amount: awardAmount,
           reason: awardReason,
+          giverName: facilitatorGiverName,
         }),
       });
       if (res.ok) {
         const pData = await res.json();
+        const usedReason = awardReason || `Facilitator Award (${awardCategory})`;
         setShowAwardModal(false);
         setAwardReason("");
         loadLeaderboard();
         const socket = getSocket();
         socket.emit("leaderboard:points_awarded", { sessionId: id });
+        socket.emit("point:award", {
+          sessionId: id,
+          notificationId: pData.id,
+          recipientId: awardTargetParticipant,
+          amount: awardAmount,
+          reason: usedReason,
+          giverName: facilitatorGiverName,
+        });
 
         if (pData.newBadges && pData.newBadges.length > 0) {
           for (const b of pData.newBadges) {
@@ -378,6 +414,44 @@ export default function FacilitatorDashboard() {
     }
   };
 
+  const handleFacilitatorLike = (resp: any) => {
+    const facilitatorGiverName = currentUser?.name || currentUser?.username
+      ? `Facilitator (${currentUser.name || currentUser.username})`
+      : "Facilitator";
+    const reasonText = facilitatorLikeReason.trim() || "Great contribution recognized by the Facilitator!";
+    const socket = getSocket();
+    socket.emit("like:add", {
+      sessionId: id,
+      notificationId: `fac-like-${resp.id}-${Date.now()}`,
+      responseId: resp.id,
+      recipientId: resp.participantId,
+      giverName: facilitatorGiverName,
+      reason: reasonText,
+    });
+    setFacilitatorLikeForId(null);
+    setFacilitatorLikeReason("");
+  };
+
+  const handleFacilitatorComment = (resp: any) => {
+    const contentText = facilitatorCommentText.trim();
+    if (!contentText) return;
+    const facilitatorName = currentUser?.name || currentUser?.username
+      ? `Facilitator (${currentUser.name || currentUser.username})`
+      : "Facilitator";
+    const socket = getSocket();
+    socket.emit("comment:add", {
+      sessionId: id,
+      notificationId: `fac-comment-${resp.id}-${Date.now()}`,
+      responseId: resp.id,
+      recipientId: resp.participantId,
+      commenterName: facilitatorName,
+      content: contentText,
+      reason: contentText,
+    });
+    setFacilitatorCommentForId(null);
+    setFacilitatorCommentText("");
+  };
+
   const handleAwardBadge = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!badgeTargetParticipant || !selectedBadgeId) return;
@@ -386,15 +460,17 @@ export default function FacilitatorDashboard() {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({
+          sessionId: id,
           badgeId: selectedBadgeId,
-          reason: badgeReason,
-          awardedBy: "Facilitator",
+          facilitatorId: currentUser?.id || session?.facilitatorId || "FACILITATOR",
+          reason: badgeReason || undefined,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setShowBadgeModal(false);
         setBadgeReason("");
+        loadLeaderboard();
         const socket = getSocket();
         socket.emit("badge:award", {
           sessionId: id,
@@ -402,8 +478,12 @@ export default function FacilitatorDashboard() {
           badge: data.badge,
           reason: data.reason,
         });
+        socket.emit("leaderboard:points_awarded", { sessionId: id });
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 401) {
+          setShowLoginModal(true);
+        }
         alert(err.error || "Failed to award badge");
       }
     } catch (err: any) {
@@ -483,9 +563,11 @@ export default function FacilitatorDashboard() {
     });
   };
 
-  const handleCreateActivity = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newActTitle.trim() || !newActPrompt.trim()) return;
+  const createNewActivityRequest = async (autoLaunch: boolean = false) => {
+    if (!newActTitle.trim() || !newActPrompt.trim()) {
+      alert("Please enter both an Activity Title and a Prompt.");
+      return;
+    }
 
     let config: string | undefined = undefined;
     if (newActType === "POLL" || newActType === "QUIZ") {
@@ -510,19 +592,34 @@ export default function FacilitatorDashboard() {
           revealMode: newActReveal,
           type: newActType,
           config,
-          presentationSlide: currentSlide,
+          presentationSlide: Math.max(1, currentSlide || 1),
         }),
       });
 
-      if (!res.ok) throw new Error("Failed to create activity");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 401) {
+          setShowLoginModal(true);
+        }
+        throw new Error(errData.error || "Failed to create activity");
+      }
       const created = await res.json();
       setActivities((prev) => [...prev, created]);
       setShowCreateActivity(false);
       setNewActTitle("");
       setNewActPrompt("");
+
+      if (autoLaunch && created?.id) {
+        await transitionActivity(created.id, "ACTIVE");
+      }
     } catch (err: any) {
-      alert(err.message);
+      alert(err.message || "Failed to create activity");
     }
+  };
+
+  const handleCreateActivity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await createNewActivityRequest(false);
   };
 
   const transitionActivity = async (activityId: string, state: "ACTIVE" | "LOCKED" | "COMPLETED") => {
@@ -680,10 +777,36 @@ export default function FacilitatorDashboard() {
         setActiveActivity(null);
         const aRes = await fetch(`/api/sessions/${id}/activities`);
         if (aRes.ok) setActivities(await aRes.json());
-        alert("Session successfully concluded. You can now download the complete JSON dataset.");
+        alert("Session successfully concluded. You can now download the complete JSON dataset or create a new session.");
       }
     } catch (err: any) {
       alert(err.message);
+    }
+  };
+
+  const handleDownloadJson = async () => {
+    try {
+      const res = await fetch(`/api/sessions/${id}/export/json`, {
+        method: "GET",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to export session JSON. Please ensure you are signed in as Facilitator.");
+      }
+      const data = await res.json();
+      const jsonString = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonString], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `session-${session?.code || id}-dataset.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || "Failed to download JSON dataset.");
     }
   };
 
@@ -764,17 +887,17 @@ export default function FacilitatorDashboard() {
             Launch Projector View
           </Link>
 
-          <a
-            href={`/api/sessions/${id}/export/json`}
-            download
+          <button
+            type="button"
+            onClick={handleDownloadJson}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 font-medium text-sm rounded-xl border border-slate-200 shadow-sm transition"
             title="Download Complete Session JSON Dataset"
           >
             <Download className="w-4 h-4 text-slate-500" />
             Export JSON
-          </a>
+          </button>
 
-          {session.status !== "COMPLETED" && (
+          {session.status !== "COMPLETED" ? (
             <button
               onClick={handleConcludeSession}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium text-sm rounded-xl border border-rose-200 shadow-sm transition"
@@ -783,9 +906,50 @@ export default function FacilitatorDashboard() {
               <CheckCircle className="w-4 h-4 text-rose-600" />
               Conclude
             </button>
+          ) : (
+            <Link
+              href="/sessions/create"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl shadow-sm transition"
+              title="Create a New Training Session"
+            >
+              <Plus className="w-4 h-4" />
+              Create New Session
+            </Link>
           )}
         </div>
       </header>
+
+      {/* Concluded Session Banner */}
+      {session.status === "COMPLETED" && (
+        <div className="mx-6 mt-6 bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <CheckCircle className="w-6 h-6 text-emerald-600 shrink-0" />
+            <div>
+              <h3 className="text-sm font-bold text-emerald-900">This Session Has Concluded</h3>
+              <p className="text-xs text-emerald-700">
+                All activities are completed. You can export the session JSON dataset or start a new session right away.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={handleDownloadJson}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-emerald-100/50 text-emerald-800 font-semibold text-xs rounded-xl border border-emerald-300 shadow-sm transition"
+            >
+              <Download className="w-4 h-4" />
+              Download JSON
+            </button>
+            <Link
+              href="/sessions/create"
+              className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition"
+            >
+              <Plus className="w-4 h-4" />
+              Create New Session
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <div className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -797,8 +961,31 @@ export default function FacilitatorDashboard() {
               <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wider mb-2">
                 Scan to Join Session
               </h3>
-              <div className="w-48 h-48 bg-slate-50 flex items-center justify-center rounded-xl border border-slate-200 mb-3">
-                <span className="text-xs text-slate-400 font-mono">Code: {session.code}</span>
+              <div className="w-56 h-56 bg-white flex items-center justify-center rounded-xl border border-slate-200 mb-3 p-2 shadow-inner">
+                {qrDataUrl ? (
+                  <img
+                    src={qrDataUrl}
+                    alt={`QR Code for session ${session.code}`}
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <span className="text-xs text-slate-400 font-mono">Generating QR...</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-mono font-bold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-lg border border-indigo-200">
+                  Code: {session.code}
+                </span>
+                {qrDataUrl && (
+                  <a
+                    href={qrDataUrl}
+                    download={`session-${session.code}-qr.png`}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download QR
+                  </a>
+                )}
               </div>
             </div>
           )}
@@ -1084,20 +1271,28 @@ export default function FacilitatorDashboard() {
                   </div>
                 )}
 
-                <div className="flex justify-end pt-1">
+                <div className="flex justify-end gap-2 pt-1">
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow transition"
+                    className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold rounded-lg shadow-sm transition"
                   >
                     Save Activity
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => createNewActivityRequest(true)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow transition flex items-center gap-1.5"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    Save & Launch Now
                   </button>
                 </div>
               </form>
             )}
 
             {/* If an activity is active/locked, show prompt and live responses */}
-            {activeActivity ? (
-              <div className="space-y-4">
+            {activeActivity && (
+              <div className="space-y-4 mb-6 pb-6 border-b border-slate-100">
                 {/* Timer Controls Bar */}
                 <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-900 text-white rounded-xl">
                   <div className="flex items-center gap-3">
@@ -1283,9 +1478,45 @@ export default function FacilitatorDashboard() {
                               <span className="text-xs font-bold text-slate-700">
                                 {resp.participant?.displayName || "Participant"}
                               </span>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5">
                                 {resp.isHidden && (
                                   <span className="text-[10px] text-red-600 font-bold uppercase">Hidden</span>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    setFacilitatorLikeForId(facilitatorLikeForId === resp.id ? null : resp.id);
+                                    setFacilitatorCommentForId(null);
+                                  }}
+                                  title="Send Like notification to participant"
+                                  className="px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 text-pink-600 hover:bg-pink-50 border border-pink-100 transition"
+                                >
+                                  <ThumbsUp className="w-3 h-3" />
+                                  Like
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setFacilitatorCommentForId(facilitatorCommentForId === resp.id ? null : resp.id);
+                                    setFacilitatorLikeForId(null);
+                                  }}
+                                  title="Send Comment notification to participant"
+                                  className="px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 text-indigo-600 hover:bg-indigo-50 border border-indigo-100 transition"
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                  Comment
+                                </button>
+                                {resp.participantId && (
+                                  <button
+                                    onClick={() => {
+                                      setAwardTargetParticipant(resp.participantId);
+                                      setAwardCategory("FACILITATOR");
+                                      setShowAwardModal(true);
+                                    }}
+                                    title="Award points to participant"
+                                    className="px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 text-amber-700 hover:bg-amber-50 border border-amber-200 transition"
+                                  >
+                                    <Award className="w-3 h-3" />
+                                    +Pts
+                                  </button>
                                 )}
                                 <button
                                   onClick={() => handleToggleProjectResponse(resp.id)}
@@ -1308,6 +1539,42 @@ export default function FacilitatorDashboard() {
                               </div>
                             </div>
                             <p className="text-xs text-slate-800">{resp.content}</p>
+
+                            {facilitatorLikeForId === resp.id && (
+                              <div className="mt-2.5 pt-2.5 border-t border-slate-100 flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={facilitatorLikeReason}
+                                  onChange={(e) => setFacilitatorLikeReason(e.target.value)}
+                                  placeholder="Reason for liking (optional)..."
+                                  className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-800 focus:outline-none focus:ring-1 focus:ring-pink-500"
+                                />
+                                <button
+                                  onClick={() => handleFacilitatorLike(resp)}
+                                  className="px-3 py-1.5 bg-pink-600 hover:bg-pink-700 text-white text-xs font-semibold rounded-lg transition"
+                                >
+                                  Send Like
+                                </button>
+                              </div>
+                            )}
+
+                            {facilitatorCommentForId === resp.id && (
+                              <div className="mt-2.5 pt-2.5 border-t border-slate-100 flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={facilitatorCommentText}
+                                  onChange={(e) => setFacilitatorCommentText(e.target.value)}
+                                  placeholder="Write feedback/reason for participant..."
+                                  className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                />
+                                <button
+                                  onClick={() => handleFacilitatorComment(resp)}
+                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition"
+                                >
+                                  Send Comment
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1315,45 +1582,62 @@ export default function FacilitatorDashboard() {
                   </div>
                 )}
               </div>
-            ) : (
-              <div>
-                <p className="text-xs text-slate-500 mb-3">Activities created for this session:</p>
-                {activities.length === 0 ? (
-                  <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                    <Sparkles className="w-6 h-6 text-slate-300 mx-auto mb-2" />
-                    <p className="text-xs text-slate-500">No activities created yet. Click "New Activity" above to create one.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {activities.map((act) => (
-                      <div
-                        key={act.id}
-                        className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between"
-                      >
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-800">{act.title}</h4>
-                          <p className="text-[11px] text-slate-500 truncate max-w-sm">{act.prompt}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] uppercase font-bold text-slate-400 px-2 py-0.5 bg-white rounded border border-slate-200">
-                            {act.state}
-                          </span>
-                          {act.state !== "ACTIVE" && (
-                            <button
-                              onClick={() => transitionActivity(act.id, "ACTIVE")}
-                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition"
-                            >
-                              <Play className="w-3 h-3" />
-                              Launch
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             )}
+
+            <div>
+              <p className="text-xs font-semibold text-slate-600 mb-3">
+                Session Activities ({activities.length}):
+              </p>
+              {activities.length === 0 ? (
+                <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  <Sparkles className="w-6 h-6 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs text-slate-500">No activities created yet. Click "New Activity" above to create one.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {activities.map((act) => (
+                    <div
+                      key={act.id}
+                      className={`p-3 rounded-xl border flex items-center justify-between transition ${
+                        act.state === "ACTIVE"
+                          ? "bg-indigo-50/70 border-indigo-200"
+                          : "bg-slate-50 border-slate-200"
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-slate-800">{act.title}</h4>
+                          <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-100/80 px-1.5 py-0.5 rounded">
+                            {act.type}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 truncate max-w-sm mt-0.5">{act.prompt}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${
+                            act.state === "ACTIVE"
+                              ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                              : "bg-white text-slate-500 border-slate-200"
+                          }`}
+                        >
+                          {act.state}
+                        </span>
+                        {act.state !== "ACTIVE" && (
+                          <button
+                            onClick={() => transitionActivity(act.id, "ACTIVE")}
+                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                          >
+                            <Play className="w-3 h-3" />
+                            Launch
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

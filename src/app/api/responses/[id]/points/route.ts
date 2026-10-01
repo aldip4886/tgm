@@ -10,9 +10,12 @@ const pointSchema = z.object({
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
+    const resolvedParams = await Promise.resolve(params);
+    const responseId = resolvedParams.id;
+
     const authHeader = req.headers.get("authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -24,7 +27,7 @@ export async function POST(
     const validated = pointSchema.parse(body);
 
     const result = await awardPeerPoints(
-      params.id,
+      responseId,
       payload.participantId,
       validated.amount,
       validated.reason
@@ -34,6 +37,7 @@ export async function POST(
       const { getIO } = await import("@/lib/socket");
       const io = getIO();
       io.to(`session:${result.point.sessionId}`).emit("point:awarded_notification", {
+        notificationId: result.point.id,
         recipientId: result.recipientId,
         amount: validated.amount,
         reason: validated.reason,

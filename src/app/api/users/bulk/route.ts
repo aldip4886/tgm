@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bulkUploadUsers } from "@/services/user.service";
-import { verifyUserToken } from "@/lib/auth";
+import { verifyFacilitatorAuth } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization");
+    const cookieToken = req.cookies.get("tgms_user_token")?.value;
     let actorRole: string | undefined;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      try {
-        const payload = await verifyUserToken(authHeader.substring(7));
-        actorRole = payload.role;
-      } catch {}
+
+    if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
+      const payload = await verifyFacilitatorAuth(req);
+      actorRole = payload.role;
     }
 
     const contentType = req.headers.get("content-type") || "";
@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     const result = await bulkUploadUsers(csvData, actorRole);
     return NextResponse.json(result);
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    const status = err.status || 400;
+    return NextResponse.json({ error: err.message }, { status });
   }
 }

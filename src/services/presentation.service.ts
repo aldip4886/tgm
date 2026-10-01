@@ -5,12 +5,32 @@ export interface LinkPresentationInput {
   canvaSlideCount?: number;
 }
 
+export function sanitizeCanvaUrl(rawInput: string): string {
+  if (!rawInput) return "";
+  let url = rawInput.trim();
+
+  // If user pasted an iframe embed code (e.g. <iframe ... src="..." ...></iframe>)
+  const iframeMatch = url.match(/src=["']([^"']+)["']/i);
+  if (iframeMatch && iframeMatch[1]) {
+    url = iframeMatch[1].trim();
+  }
+
+  // If it is a Canva link with /view, ensure it has ?embed
+  if (url.includes("canva.com") && url.includes("/view") && !url.includes("embed")) {
+    url = url.replace("/view", "/view?embed");
+  }
+
+  return url;
+}
+
 export async function linkPresentation(sessionId: string, input: LinkPresentationInput) {
+  const cleanUrl = sanitizeCanvaUrl(input.canvaPresentationUrl);
+
   return await prisma.$transaction(async (tx) => {
     const session = await tx.session.update({
       where: { id: sessionId },
       data: {
-        canvaPresentationUrl: input.canvaPresentationUrl.trim(),
+        canvaPresentationUrl: cleanUrl,
         canvaSlideCount: input.canvaSlideCount || 1,
       },
     });

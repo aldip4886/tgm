@@ -31,6 +31,7 @@ export async function GET(
       activityId,
       teamId: teamId || undefined,
       participantId: participantId || undefined,
+      actorId: searchParams.get("actorId") || participantId || undefined,
     });
 
     return NextResponse.json(whiteboard);

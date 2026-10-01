@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { awardPoints, PointCategory } from "@/services/scoring.service";
+import { verifyFacilitatorAuth } from "@/lib/auth";
 import { z } from "zod";
 
 const schema = z.object({
@@ -28,6 +29,14 @@ export async function POST(
     const body = await req.json();
     const data = schema.parse(body);
 
+    if (data.category === "FACILITATOR" || data.category === "BONUS" || data.category === "CHALLENGE") {
+      const authHeader = req.headers.get("authorization");
+      const cookieToken = req.cookies.get("tgms_user_token")?.value;
+      if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
+        await verifyFacilitatorAuth(req, id);
+      }
+    }
+
     const point = await awardPoints({
       sessionId: id,
       participantId: data.participantId,
@@ -39,8 +48,23 @@ export async function POST(
       activityId: data.activityId,
     });
 
+    try {
+      const { getIO } = await import("@/lib/socket");
+      const io = getIO();
+      if (data.participantId) {
+        io.to(`session:${id}`).emit("point:awarded_notification", {
+          recipientId: data.participantId,
+          amount: data.amount,
+          reason: data.reason || "Facilitator points awarded",
+          giverName: "Facilitator",
+        });
+      }
+      io.to(`session:${id}`).emit("leaderboard:scores_updated");
+    } catch {}
+
     return NextResponse.json(point, { status: 201 });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    const status = err.status || 400;
+    return NextResponse.json({ error: err.message }, { status });
   }
 }

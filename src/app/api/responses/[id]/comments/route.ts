@@ -29,6 +29,23 @@ export async function POST(
       validated.content,
       validated.parentId
     );
+
+    try {
+      const { getIO } = await import("@/lib/socket");
+      const io = getIO();
+      if (io && comment.response?.participantId) {
+        if (comment.response.participantId !== payload.participantId) {
+          const sessionId = comment.response.participant?.sessionId || payload.sessionId;
+          io.to(`session:${sessionId}`).emit("comment:received_notification", {
+            recipientId: comment.response.participantId,
+            commenterName: comment.participant?.displayName || "A participant",
+            content: comment.content,
+            responseId: params.id,
+          });
+        }
+      }
+    } catch {}
+
     return NextResponse.json(comment, { status: 201 });
   } catch (error: any) {
     return NextResponse.json(

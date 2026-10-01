@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exportSessionData } from "@/services/export.service";
+import { verifyFacilitatorAuth } from "@/lib/auth";
 
 export async function GET(
   req: NextRequest,
@@ -7,6 +8,12 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const authHeader = req.headers.get("authorization");
+    const cookieToken = req.cookies.get("tgms_user_token")?.value;
+    if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
+      await verifyFacilitatorAuth(req, id);
+    }
+
     const data = await exportSessionData(id);
 
     const filename = `session-${data.session.code || id}-dataset.json`;

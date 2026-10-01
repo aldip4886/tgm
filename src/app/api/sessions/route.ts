@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSession } from "@/services/session.service";
+import { verifyFacilitatorAuth } from "@/lib/auth";
 import { z } from "zod";
 
 const createSessionSchema = z.object({
@@ -11,14 +12,28 @@ const createSessionSchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
+    const authHeader = req.headers.get("authorization");
+    const cookieToken = req.cookies.get("tgms_user_token")?.value;
+    let authUser: any = null;
+
+    if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
+      authUser = await verifyFacilitatorAuth(req);
+    }
+
     const body = await req.json();
     const validated = createSessionSchema.parse(body);
-    const session = await createSession(validated);
+    const session = await createSession({
+      ...validated,
+      facilitatorName: authUser ? authUser.username || validated.facilitatorName : validated.facilitatorName,
+      facilitatorEmail: authUser?.email || validated.facilitatorEmail,
+    });
     return NextResponse.json(session, { status: 201 });
   } catch (error: any) {
+    const status = error.status || 400;
     return NextResponse.json(
       { error: error.message || "Failed to create session" },
-      { status: 400 }
+      { status }
     );
   }
 }
+

@@ -8,12 +8,15 @@ generator client {
 }
 
 model User {
-  id        String    @id @default(uuid())
-  email     String    @unique
-  name      String
-  role      String    @default("FACILITATOR") // FACILITATOR, ADMIN
-  createdAt DateTime  @default(now())
-  sessions  Session[]
+  id           String               @id @default(uuid())
+  email        String?              @unique
+  username     String?              @unique
+  password     String?
+  name         String
+  role         String               @default("FACILITATOR") // SUPER_ADMIN, ADMIN, FACILITATOR, PARTICIPANT
+  createdAt    DateTime             @default(now())
+  sessions     Session[]
+  participants SessionParticipant[]
 }
 
 model Session {
@@ -60,6 +63,8 @@ model SessionParticipant {
   totalPoints     Int                @default(0)
   teamId          String?
   team            Team?              @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  userId          String?
+  user            User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   isConnected     Boolean            @default(true)
   joinedAt        DateTime           @default(now())
   responses       Response[]
@@ -90,7 +95,8 @@ model Activity {
   session           Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   title             String
   prompt            String
-  type              String       @default("OPEN_QUESTION") // OPEN_QUESTION, STICKY_NOTE, CASE_STUDY, POLL, TEAM_CHALLENGE, WHITEBOARD
+  type              String       @default("OPEN_QUESTION") // OPEN_QUESTION, POLL, QUIZ, WORD_CLOUD, QA, RANKING, OPEN_ENDED, WHITEBOARD_TEAM, WHITEBOARD_INDIVIDUAL, WHITEBOARD_PUBLIC
+  config            String?      // JSON configuration for options, correct answers, ranking items, etc.
   state             String       @default("DRAFT") // DRAFT, ACTIVE, LOCKED, COMPLETED
   revealMode        String       @default("UPON_LOCK") // UPON_LOCK, IMMEDIATE
   presentationSlide Int?

@@ -29,6 +29,19 @@ export async function POST(
       validated.amount,
       validated.reason
     );
+
+    try {
+      const { getIO } = await import("@/lib/socket");
+      const io = getIO();
+      io.to(`session:${result.point.sessionId}`).emit("point:awarded_notification", {
+        recipientId: result.recipientId,
+        amount: validated.amount,
+        reason: validated.reason,
+        giverName: result.giverName,
+      });
+      io.to(`session:${result.point.sessionId}`).emit("leaderboard:scores_updated");
+    } catch {}
+
     return NextResponse.json(result, { status: 201 });
   } catch (error: any) {
     return NextResponse.json(

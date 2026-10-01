@@ -58,6 +58,10 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
       io?.to(`session:${sessionId}`).emit("presentation:slide_updated", { slideNumber });
     });
 
+    socket.on("presentation:linked", ({ sessionId, canvaPresentationUrl, canvaSlideCount }: any) => {
+      io?.to(`session:${sessionId}`).emit("presentation:linked", { canvaPresentationUrl, canvaSlideCount });
+    });
+
     socket.on("activity:change_state", ({ sessionId, activity }: { sessionId: string; activity: any }) => {
       io?.to(`session:${sessionId}`).emit("activity:state_updated", { activity });
     });
@@ -98,6 +102,10 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
       io?.to(`session:${sessionId}`).emit("whiteboard:projected", { whiteboardId });
     });
 
+    socket.on("response:project", ({ sessionId, responseId }: { sessionId: string; responseId: string }) => {
+      io?.to(`session:${sessionId}`).emit("response:projected", { responseId });
+    });
+
     socket.on("leaderboard:visibility_changed", ({ sessionId, visibility }: { sessionId: string; visibility: string }) => {
       io?.to(`session:${sessionId}`).emit("leaderboard:visibility_updated", { visibility });
     });
@@ -108,6 +116,39 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
 
     socket.on("badge:award", ({ sessionId, participantId, badge, reason }: any) => {
       io?.to(`session:${sessionId}`).emit("badge:celebrate", { participantId, badge, reason });
+    });
+
+    socket.on("poll:vote", ({ sessionId, activityId }: { sessionId: string; activityId: string }) => {
+      io?.to(`session:${sessionId}`).emit("poll:voted", { activityId });
+    });
+
+    socket.on("wordcloud:submit", ({ sessionId, activityId }: { sessionId: string; activityId: string }) => {
+      io?.to(`session:${sessionId}`).emit("wordcloud:updated", { activityId });
+    });
+
+    socket.on("qa:new_question", ({ sessionId, activityId, question }: any) => {
+      io?.to(`session:${sessionId}`).emit("qa:question_added", { activityId, question });
+    });
+
+    socket.on("qa:upvote", ({ sessionId, activityId, questionId }: any) => {
+      io?.to(`session:${sessionId}`).emit("qa:question_upvoted", { activityId, questionId });
+    });
+
+    socket.on("qa:status_change", ({ sessionId, activityId, questionId, status }: any) => {
+      io?.to(`session:${sessionId}`).emit("qa:question_status", { activityId, questionId, status });
+    });
+
+    socket.on("ranking:submit", ({ sessionId, activityId }: { sessionId: string; activityId: string }) => {
+      io?.to(`session:${sessionId}`).emit("ranking:updated", { activityId });
+    });
+
+    socket.on("point:award", ({ sessionId, recipientId, amount, reason, giverName }: any) => {
+      io?.to(`session:${sessionId}`).emit("point:awarded_notification", { recipientId, amount, reason, giverName });
+      io?.to(`session:${sessionId}`).emit("leaderboard:scores_updated");
+    });
+
+    socket.on("comment:add", ({ sessionId, recipientId, commenterName, content, responseId }: any) => {
+      io?.to(`session:${sessionId}`).emit("comment:received_notification", { recipientId, commenterName, content, responseId });
     });
   });
 

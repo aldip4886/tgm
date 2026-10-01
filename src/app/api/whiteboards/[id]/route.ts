@@ -18,7 +18,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const whiteboard = await getWhiteboardById(id);
+    const { searchParams } = new URL(req.url);
+    const actorId = searchParams.get("actorId");
+    const whiteboard = await getWhiteboardById(id, actorId || undefined);
     if (!whiteboard) {
       return NextResponse.json({ error: "Whiteboard not found" }, { status: 404 });
     }

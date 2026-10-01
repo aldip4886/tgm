@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Presentation, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { Presentation, ArrowLeft, CheckCircle2, Lock, ShieldCheck } from "lucide-react";
 
 export default function CreateSessionPage() {
   const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [userToken, setUserToken] = useState<string | null>(null);
+
+  // Form fields
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [facilitatorName, setFacilitatorName] = useState("");
@@ -14,9 +18,85 @@ export default function CreateSessionPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Sign in modal state for unauthenticated users
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem("tgms_user_token");
+    const rawUser = localStorage.getItem("tgms_user");
+
+    if (token && rawUser) {
+      try {
+        const parsed = JSON.parse(rawUser);
+        if (parsed.role === "FACILITATOR" || parsed.role === "ADMIN") {
+          setCurrentUser(parsed);
+          setUserToken(token);
+          setFacilitatorName(parsed.name || "");
+          setFacilitatorEmail(parsed.email || `${parsed.username}@training.local`);
+          return;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // If not authenticated as facilitator, show login prompt
+    setShowLoginModal(true);
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError("");
+    setLoginLoading(true);
+
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: loginUsername.trim(),
+          password: loginPassword,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Invalid credentials");
+
+      if (
+        data.user?.role !== "FACILITATOR" &&
+        data.user?.role !== "ADMIN" &&
+        data.user?.role !== "SUPER_ADMIN"
+      ) {
+        throw new Error("Access restricted: Only facilitators and administrators can host sessions.");
+      }
+
+      localStorage.setItem("tgms_user_token", data.userToken);
+      localStorage.setItem("tgms_user", JSON.stringify(data.user));
+
+      setCurrentUser(data.user);
+      setUserToken(data.userToken);
+      setFacilitatorName(data.user.name || "");
+      setFacilitatorEmail(data.user.email || `${data.user.username}@training.local`);
+      setShowLoginModal(false);
+    } catch (err: any) {
+      setLoginError(err.message);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (!userToken) {
+      setShowLoginModal(true);
+      return;
+    }
 
     if (!title.trim() || !facilitatorName.trim() || !facilitatorEmail.trim()) {
       setError("Please complete all required fields.");
@@ -27,7 +107,10 @@ export default function CreateSessionPage() {
     try {
       const res = await fetch("/api/sessions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${userToken}`,
+        },
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim() || undefined,
@@ -70,6 +153,29 @@ export default function CreateSessionPage() {
               <p className="text-xs text-slate-500">Configure your session details and generate a join code</p>
             </div>
           </div>
+
+          {currentUser && (
+            <div className="mb-6 p-3.5 bg-indigo-50/70 border border-indigo-100 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <ShieldCheck className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <span className="text-xs font-bold text-slate-800">
+                    Host: {currentUser.name}
+                  </span>
+                  <span className="text-[11px] text-slate-500 block">
+                    @{currentUser.username} • {currentUser.role}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLoginModal(true)}
+                className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+              >
+                Switch Account
+              </button>
+            </div>
+          )}
 
           {error && (
             <div className="mb-6 p-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl">
@@ -146,6 +252,72 @@ export default function CreateSessionPage() {
           </form>
         </div>
       </div>
+
+      {/* Facilitator Sign-In Required Modal */}
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
+            <div className="text-center mb-4">
+              <div className="w-12 h-12 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center mx-auto mb-2">
+                <Lock className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Facilitator Sign-In Required</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                You must be signed in with a Facilitator or Admin account to create and manage training sessions.
+              </p>
+            </div>
+
+            {loginError && (
+              <div className="mb-4 p-2.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl">
+                {loginError}
+              </div>
+            )}
+
+            <form onSubmit={handleLogin} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Username:</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. facilitator_maya"
+                  value={loginUsername}
+                  onChange={(e) => setLoginUsername(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Password:</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loginLoading}
+                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm"
+              >
+                {loginLoading ? "Authenticating..." : "Sign In & Host Session"}
+              </button>
+
+              <div className="text-center pt-2">
+                <Link
+                  href="/"
+                  className="text-xs text-slate-500 hover:text-slate-800"
+                >
+                  Cancel & Return Home
+                </Link>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

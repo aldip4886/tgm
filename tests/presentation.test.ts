@@ -6,6 +6,7 @@ import {
   createPresentationMapping,
   getPresentationMappings,
   recordSlideView,
+  sanitizeCanvaUrl,
 } from "../src/services/presentation.service";
 
 describe("Ticket 02: Presentation Link & Split Workspace with Projector View", () => {
@@ -29,7 +30,7 @@ describe("Ticket 02: Presentation Link & Split Workspace with Projector View", (
       canvaSlideCount: 15,
     });
 
-    expect(updated.canvaPresentationUrl).toBe("https://www.canva.com/design/DAF12345/view");
+    expect(updated.canvaPresentationUrl).toBe("https://www.canva.com/design/DAF12345/view?embed");
     expect(updated.canvaSlideCount).toBe(15);
 
     // Event log
@@ -37,6 +38,14 @@ describe("Ticket 02: Presentation Link & Split Workspace with Projector View", (
       where: { sessionId: session.id, eventType: "PRESENTATION_CONNECTED" },
     });
     expect(events).toHaveLength(1);
+  });
+
+  it("sanitizes Canva raw URL and iframe embed HTML code", () => {
+    const rawUrl = "https://www.canva.com/design/DAF12345/view";
+    expect(sanitizeCanvaUrl(rawUrl)).toBe("https://www.canva.com/design/DAF12345/view?embed");
+
+    const embedHtml = `<div style="position: relative;"><iframe loading="lazy" src="https://www.canva.com/design/DAGabcdef/view?embed" allowfullscreen="allowfullscreen"></iframe></div>`;
+    expect(sanitizeCanvaUrl(embedHtml)).toBe("https://www.canva.com/design/DAGabcdef/view?embed");
   });
 
   it("facilitator can create presentation mappings for slides to checkpoints", async () => {

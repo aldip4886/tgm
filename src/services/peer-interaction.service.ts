@@ -90,6 +90,9 @@ export async function createComment(
       },
       include: {
         participant: true,
+        response: {
+          include: { participant: true },
+        },
       },
     });
 
@@ -230,6 +233,9 @@ export async function awardPeerPoints(
 
     return {
       point,
+      giverName: giver.displayName,
+      recipientId: response.participantId,
+      recipientName: recipient?.displayName,
       remainingBudget: updatedGiver.peerPointBudget,
       newBadges,
     };

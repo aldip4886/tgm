@@ -28,9 +28,15 @@ import {
   ArrowRightLeft,
   Trophy,
   Award,
+  UserPlus,
   Download,
+  ShieldCheck,
 } from "lucide-react";
 import { LeaderboardView } from "@/components/LeaderboardView";
+import { PollQuizView } from "@/components/interactions/PollQuizView";
+import { WordCloudView } from "@/components/interactions/WordCloudView";
+import { QAView } from "@/components/interactions/QAView";
+import { RankingView } from "@/components/interactions/RankingView";
 
 export default function FacilitatorDashboard() {
   const { id } = useParams<{ id: string }>();
@@ -55,11 +61,16 @@ export default function FacilitatorDashboard() {
   const [responses, setResponses] = useState<any[]>([]);
   const [whiteboards, setWhiteboards] = useState<any[]>([]);
   const [projectedWbId, setProjectedWbId] = useState<string | null>(null);
+  const [projectedResponseId, setProjectedResponseId] = useState<string | null>(null);
   const [showCreateActivity, setShowCreateActivity] = useState(false);
   const [newActTitle, setNewActTitle] = useState("");
   const [newActPrompt, setNewActPrompt] = useState("");
   const [newActReveal, setNewActReveal] = useState("UPON_LOCK");
   const [newActType, setNewActType] = useState("OPEN_QUESTION");
+  const [pollOptions, setPollOptions] = useState<string[]>(["Option A", "Option B", "Option C", "Option D"]);
+  const [quizCorrectOption, setQuizCorrectOption] = useState<number>(0);
+  const [quizPoints, setQuizPoints] = useState<number>(10);
+  const [rankingItems, setRankingItems] = useState<string[]>(["Item 1", "Item 2", "Item 3", "Item 4"]);
 
   // Teams State
   const [teams, setTeams] = useState<any[]>([]);
@@ -84,6 +95,95 @@ export default function FacilitatorDashboard() {
   const [badgeTargetParticipant, setBadgeTargetParticipant] = useState<string>("");
   const [selectedBadgeId, setSelectedBadgeId] = useState<string>("");
   const [badgeReason, setBadgeReason] = useState<string>("");
+
+  // Facilitator Auth State
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [userToken, setUserToken] = useState<string | null>(null);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  const getAuthHeaders = (): Record<string, string> => {
+    const token =
+      userToken || (typeof window !== "undefined" ? localStorage.getItem("tgms_user_token") : null);
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem("tgms_user_token");
+    const rawUser = localStorage.getItem("tgms_user");
+
+    if (token && rawUser) {
+      try {
+        const parsed = JSON.parse(rawUser);
+        if (parsed.role === "FACILITATOR" || parsed.role === "ADMIN") {
+          setCurrentUser(parsed);
+          setUserToken(token);
+        } else {
+          setShowLoginModal(true);
+        }
+      } catch {
+        setShowLoginModal(true);
+      }
+    } else {
+      setShowLoginModal(true);
+    }
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError("");
+    setLoginLoading(true);
+
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: loginUsername.trim(),
+          password: loginPassword,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Invalid credentials");
+
+      if (
+        data.user?.role !== "FACILITATOR" &&
+        data.user?.role !== "ADMIN" &&
+        data.user?.role !== "SUPER_ADMIN"
+      ) {
+        throw new Error(
+          "Access restricted: Only facilitators and administrators can access the control dashboard."
+        );
+      }
+
+      localStorage.setItem("tgms_user_token", data.userToken);
+      localStorage.setItem("tgms_user", JSON.stringify(data.user));
+
+      setCurrentUser(data.user);
+      setUserToken(data.userToken);
+      setShowLoginModal(false);
+    } catch (err: any) {
+      setLoginError(err.message);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("tgms_user_token");
+    localStorage.removeItem("tgms_user");
+    setCurrentUser(null);
+    setUserToken(null);
+    setShowLoginModal(true);
+  };
 
   useEffect(() => {
     async function fetchSessionData() {
@@ -117,7 +217,7 @@ export default function FacilitatorDashboard() {
           const current = actData.find((a: any) => a.state === "ACTIVE" || a.state === "LOCKED");
           if (current) {
             setActiveActivity(current);
-            if (current.type === "WHITEBOARD") {
+            if (current.type?.startsWith("WHITEBOARD")) {
               loadWhiteboards(current.id);
             } else {
               loadResponses(current.id);
@@ -221,7 +321,7 @@ export default function FacilitatorDashboard() {
     try {
       const res = await fetch(`/api/sessions/${id}/leaderboard/visibility`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ visibility: newVisibility }),
       });
       if (res.ok) {
@@ -240,7 +340,7 @@ export default function FacilitatorDashboard() {
     try {
       const res = await fetch(`/api/sessions/${id}/points`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           participantId: awardTargetParticipant,
           category: awardCategory,
@@ -284,7 +384,7 @@ export default function FacilitatorDashboard() {
     try {
       const res = await fetch(`/api/participants/${badgeTargetParticipant}/badges`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           badgeId: selectedBadgeId,
           reason: badgeReason,
@@ -331,6 +431,44 @@ export default function FacilitatorDashboard() {
     }
   };
 
+  const handleSavePresentation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canvaUrl.trim()) return;
+    try {
+      const res = await fetch(`/api/sessions/${id}/presentation`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          canvaPresentationUrl: canvaUrl.trim(),
+          canvaSlideCount: slideCount || 1,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setSession((prev: any) => ({
+          ...prev,
+          canvaPresentationUrl: updated.canvaPresentationUrl,
+          canvaSlideCount: updated.canvaSlideCount,
+        }));
+        setCanvaUrl(updated.canvaPresentationUrl || "");
+        setSlideCount(updated.canvaSlideCount || 1);
+        setShowLinkModal(false);
+
+        const socket = getSocket();
+        socket.emit("presentation:linked", {
+          sessionId: id,
+          canvaPresentationUrl: updated.canvaPresentationUrl,
+          canvaSlideCount: updated.canvaSlideCount,
+        });
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to link presentation");
+      }
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   const changeSlide = async (newSlide: number) => {
     if (newSlide < 1 || newSlide > slideCount) return;
     setCurrentSlide(newSlide);
@@ -340,7 +478,7 @@ export default function FacilitatorDashboard() {
 
     await fetch(`/api/sessions/${id}/slide`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ slideNumber: newSlide }),
     });
   };
@@ -349,15 +487,29 @@ export default function FacilitatorDashboard() {
     e.preventDefault();
     if (!newActTitle.trim() || !newActPrompt.trim()) return;
 
+    let config: string | undefined = undefined;
+    if (newActType === "POLL" || newActType === "QUIZ") {
+      config = JSON.stringify({
+        options: pollOptions.filter((o) => o.trim().length > 0),
+        correctAnswer: newActType === "QUIZ" ? quizCorrectOption : undefined,
+        points: newActType === "QUIZ" ? quizPoints : undefined,
+      });
+    } else if (newActType === "RANKING") {
+      config = JSON.stringify({
+        items: rankingItems.filter((i) => i.trim().length > 0),
+      });
+    }
+
     try {
       const res = await fetch(`/api/sessions/${id}/activities`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           title: newActTitle.trim(),
           prompt: newActPrompt.trim(),
           revealMode: newActReveal,
           type: newActType,
+          config,
           presentationSlide: currentSlide,
         }),
       });
@@ -377,7 +529,7 @@ export default function FacilitatorDashboard() {
     try {
       const res = await fetch(`/api/activities/${activityId}/state`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ state }),
       });
 
@@ -395,7 +547,7 @@ export default function FacilitatorDashboard() {
 
       if (state === "ACTIVE" || state === "LOCKED") {
         setActiveActivity(updated);
-        if (updated.type === "WHITEBOARD") {
+        if (updated.type?.startsWith("WHITEBOARD")) {
           loadWhiteboards(updated.id);
         } else {
           loadResponses(updated.id);
@@ -421,6 +573,13 @@ export default function FacilitatorDashboard() {
     socket.emit("whiteboard:project", { sessionId: id, whiteboardId: targetId });
   };
 
+  const handleToggleProjectResponse = (responseId: string) => {
+    const targetId = projectedResponseId === responseId ? "" : responseId;
+    setProjectedResponseId(targetId || null);
+    const socket = getSocket();
+    socket.emit("response:project", { sessionId: id, responseId: targetId });
+  };
+
   const handleTimerAction = async (
     action: "start" | "pause" | "resume" | "extend" | "complete",
     durationSeconds?: number,
@@ -430,7 +589,7 @@ export default function FacilitatorDashboard() {
     try {
       const res = await fetch(`/api/activities/${activeActivity.id}/timer`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ action, durationSeconds, extraSeconds }),
       });
       if (res.ok) {
@@ -454,7 +613,7 @@ export default function FacilitatorDashboard() {
     try {
       const res = await fetch(`/api/responses/${responseId}/moderate`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ isHidden: !currentHidden }),
       });
       if (res.ok) {
@@ -473,7 +632,7 @@ export default function FacilitatorDashboard() {
     try {
       const res = await fetch(`/api/sessions/${id}/teams`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ teamCount: splitCount }),
       });
       if (res.ok) {
@@ -493,7 +652,7 @@ export default function FacilitatorDashboard() {
     try {
       const res = await fetch(`/api/participants/${participantId}/team`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ teamId: targetTeamId }),
       });
       if (res.ok) {
@@ -512,7 +671,10 @@ export default function FacilitatorDashboard() {
       return;
     }
     try {
-      const res = await fetch(`/api/sessions/${id}/conclude`, { method: "POST" });
+      const res = await fetch(`/api/sessions/${id}/conclude`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         setSession((prev: any) => ({ ...prev, status: "COMPLETED" }));
         setActiveActivity(null);
@@ -548,6 +710,29 @@ export default function FacilitatorDashboard() {
         </div>
 
         <div className="flex items-center gap-3">
+          {currentUser ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
+              <div className="text-right">
+                <div className="text-xs font-semibold text-slate-800">{currentUser.name || currentUser.username}</div>
+                <div className="text-[10px] font-bold text-indigo-600 tracking-wider">{currentUser.role}</div>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="ml-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-lg transition"
+                title="Sign out of facilitator console"
+              >
+                Sign Out
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowLoginModal(true)}
+              className="px-3.5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm transition"
+            >
+              Sign In as Facilitator
+            </button>
+          )}
+
           <div className="flex items-center bg-slate-100 rounded-xl px-3 py-1.5 border border-slate-200">
             <span className="text-xs text-slate-500 mr-2 font-medium">Join Code:</span>
             <span className="font-mono text-lg font-bold text-indigo-600 tracking-wider mr-2">
@@ -745,10 +930,17 @@ export default function FacilitatorDashboard() {
                     <select
                       value={newActType}
                       onChange={(e) => setNewActType(e.target.value)}
-                      className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white"
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white font-medium"
                     >
-                      <option value="OPEN_QUESTION">Open Question Discussion</option>
-                      <option value="WHITEBOARD">Collaborative Whiteboard</option>
+                      <option value="OPEN_QUESTION">Open Discussion & Feedback</option>
+                      <option value="POLL">Live Audience Poll (Multiple Choice)</option>
+                      <option value="QUIZ">Competitive Trivia Quiz (Scored)</option>
+                      <option value="WORD_CLOUD">Word Cloud (Audience Clustering)</option>
+                      <option value="QA">Live Q&A Session (Upvoting & Spotlight)</option>
+                      <option value="RANKING">Prioritization & Ranking (Borda Count)</option>
+                      <option value="WHITEBOARD_TEAM">Collaborative Whiteboard (Team-Only)</option>
+                      <option value="WHITEBOARD_INDIVIDUAL">Individual Whiteboard (Participant-Only)</option>
+                      <option value="WHITEBOARD_PUBLIC">Public Whiteboard (All Participants)</option>
                     </select>
                   </div>
                   <div>
@@ -763,6 +955,135 @@ export default function FacilitatorDashboard() {
                     </select>
                   </div>
                 </div>
+
+                {/* Dynamic Configuration for POLL & QUIZ */}
+                {(newActType === "POLL" || newActType === "QUIZ") && (
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700">
+                        {newActType === "QUIZ" ? "Quiz Options & Correct Answer" : "Poll Options"}
+                      </span>
+                      {newActType === "QUIZ" && (
+                        <div className="flex items-center gap-1.5 text-xs text-slate-600 font-medium">
+                          <span>Award:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={quizPoints}
+                            onChange={(e) => setQuizPoints(Math.max(1, parseInt(e.target.value) || 10))}
+                            className="w-16 px-2 py-0.5 border border-slate-200 rounded text-xs font-bold font-mono"
+                          />
+                          <span>pts</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      {pollOptions.map((opt, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          {newActType === "QUIZ" && (
+                            <input
+                              type="radio"
+                              name="quizCorrectOption"
+                              checked={quizCorrectOption === idx}
+                              onChange={() => setQuizCorrectOption(idx)}
+                              title="Mark as correct answer"
+                              className="text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                            />
+                          )}
+                          <input
+                            type="text"
+                            required
+                            value={opt}
+                            onChange={(e) => {
+                              const updated = [...pollOptions];
+                              updated[idx] = e.target.value;
+                              setPollOptions(updated);
+                            }}
+                            placeholder={`Option ${idx + 1}`}
+                            className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-200"
+                          />
+                          {pollOptions.length > 2 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = pollOptions.filter((_, i) => i !== idx);
+                                setPollOptions(updated);
+                                if (quizCorrectOption >= updated.length) {
+                                  setQuizCorrectOption(0);
+                                }
+                              }}
+                              className="text-slate-400 hover:text-rose-600 px-1 text-xs"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {pollOptions.length < 8 && (
+                      <button
+                        type="button"
+                        onClick={() => setPollOptions([...pollOptions, `Option ${pollOptions.length + 1}`])}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold pt-1 flex items-center gap-1"
+                      >
+                        + Add Another Option
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Dynamic Configuration for RANKING */}
+                {newActType === "RANKING" && (
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-2.5">
+                    <span className="text-xs font-bold text-slate-700 block">
+                      Items to Prioritize & Rank:
+                    </span>
+                    <div className="space-y-2">
+                      {rankingItems.map((item, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span className="w-5 text-center text-xs font-mono font-bold text-slate-400">
+                            #{idx + 1}
+                          </span>
+                          <input
+                            type="text"
+                            required
+                            value={item}
+                            onChange={(e) => {
+                              const updated = [...rankingItems];
+                              updated[idx] = e.target.value;
+                              setRankingItems(updated);
+                            }}
+                            placeholder={`Item ${idx + 1}`}
+                            className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-200"
+                          />
+                          {rankingItems.length > 2 && (
+                            <button
+                              type="button"
+                              onClick={() => setRankingItems(rankingItems.filter((_, i) => i !== idx))}
+                              className="text-slate-400 hover:text-rose-600 px-1 text-xs"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {rankingItems.length < 8 && (
+                      <button
+                        type="button"
+                        onClick={() => setRankingItems([...rankingItems, `Item ${rankingItems.length + 1}`])}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold pt-1 flex items-center gap-1"
+                      >
+                        + Add Item to Rank
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex justify-end pt-1">
                   <button
                     type="submit"
@@ -839,7 +1160,33 @@ export default function FacilitatorDashboard() {
                   <p className="text-sm font-semibold text-slate-800 mt-1">{activeActivity.prompt}</p>
                 </div>
 
-                {activeActivity.type === "WHITEBOARD" ? (
+                {/* Specialized Interaction Views */}
+                {activeActivity.type === "POLL" || activeActivity.type === "QUIZ" ? (
+                  <PollQuizView
+                    activity={activeActivity}
+                    mode="facilitator"
+                    sessionId={id}
+                  />
+                ) : activeActivity.type === "WORD_CLOUD" ? (
+                  <WordCloudView
+                    activity={activeActivity}
+                    mode="facilitator"
+                    sessionId={id}
+                  />
+                ) : activeActivity.type === "QA" ? (
+                  <QAView
+                    activity={activeActivity}
+                    mode="facilitator"
+                    sessionId={id}
+                    userToken={userToken || undefined}
+                  />
+                ) : activeActivity.type === "RANKING" ? (
+                  <RankingView
+                    activity={activeActivity}
+                    mode="facilitator"
+                    sessionId={id}
+                  />
+                ) : activeActivity.type?.startsWith("WHITEBOARD") ? (
                   <div>
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -863,7 +1210,11 @@ export default function FacilitatorDashboard() {
                               <div>
                                 <div className="flex items-center gap-2">
                                   <span className="text-xs font-bold text-slate-800">
-                                    {wb.team?.name || wb.participant?.displayName || "Participant Board"}
+                                    {wb.team?.name ||
+                                      wb.participant?.displayName ||
+                                      (activeActivity.type === "WHITEBOARD_PUBLIC"
+                                        ? "Public Whiteboard (All)"
+                                        : "Whiteboard")}
                                   </span>
                                   <span
                                     className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
@@ -876,7 +1227,11 @@ export default function FacilitatorDashboard() {
                                   </span>
                                 </div>
                                 <p className="text-[11px] text-slate-500 mt-0.5">
-                                  {wb.team?.members ? `${wb.team.members.length} members` : "Individual"}
+                                  {wb.team?.members
+                                    ? `${wb.team.members.length} members`
+                                    : wb.participant
+                                    ? "Individual"
+                                    : "Public (All participants)"}
                                   {wb.submittedAt && ` • Submitted ${new Date(wb.submittedAt).toLocaleTimeString()}`}
                                 </p>
                               </div>
@@ -933,9 +1288,20 @@ export default function FacilitatorDashboard() {
                                   <span className="text-[10px] text-red-600 font-bold uppercase">Hidden</span>
                                 )}
                                 <button
+                                  onClick={() => handleToggleProjectResponse(resp.id)}
+                                  title={projectedResponseId === resp.id ? "Unproject response" : "Project response to room"}
+                                  className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition ${
+                                    projectedResponseId === resp.id
+                                      ? "bg-rose-600 text-white shadow-sm"
+                                      : "text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                                  }`}
+                                >
+                                  <Presentation className="w-3.5 h-3.5" />
+                                </button>
+                                <button
                                   onClick={() => toggleModerate(resp.id, resp.isHidden)}
                                   title={resp.isHidden ? "Unhide response" : "Hide response from participants"}
-                                  className="text-slate-400 hover:text-slate-700 transition"
+                                  className="text-slate-400 hover:text-slate-700 transition p-1.5"
                                 >
                                   {resp.isHidden ? <Eye className="w-4 h-4 text-emerald-600" /> : <EyeOff className="w-4 h-4 text-slate-400" />}
                                 </button>
@@ -999,9 +1365,19 @@ export default function FacilitatorDashboard() {
                 <Users className="w-5 h-5 text-indigo-600" />
                 Connected Participants
               </h2>
-              <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-indigo-50 text-indigo-700">
-                {participants.length}
-              </span>
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/users"
+                  target="_blank"
+                  className="px-2.5 py-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition flex items-center gap-1"
+                >
+                  <UserPlus className="w-3 h-3" />
+                  Manage Users
+                </Link>
+                <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-indigo-50 text-indigo-700">
+                  {participants.length}
+                </span>
+              </div>
             </div>
 
             {participants.length === 0 ? (
@@ -1349,6 +1725,174 @@ export default function FacilitatorDashboard() {
                   className="px-4 py-2 bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-600 hover:to-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm"
                 >
                   Award Badge
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Canva Presentation Link Modal */}
+      {showLinkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Presentation className="w-5 h-5 text-indigo-600" />
+                Link Canva Presentation
+              </h3>
+              <button
+                onClick={() => setShowLinkModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-semibold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePresentation} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Canva Share / View / Embed URL:
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  placeholder="Paste Canva view link or <iframe src='...'></iframe> embed code"
+                  value={canvaUrl}
+                  onChange={(e) => setCanvaUrl(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 font-mono"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Supports Canva Public View links (<code>https://www.canva.com/design/.../view</code>) or full HTML embed iframes.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Total Slide Count:
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  required
+                  value={slideCount}
+                  onChange={(e) => setSlideCount(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-28 px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 font-bold"
+                />
+              </div>
+
+              {/* Live Preview if URL contains canva */}
+              {canvaUrl && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                  <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">
+                    Embed Preview
+                  </span>
+                  <div className="aspect-video w-full rounded-lg overflow-hidden bg-slate-200">
+                    <iframe
+                      src={
+                        canvaUrl.includes("view?embed")
+                          ? canvaUrl
+                          : canvaUrl.replace("/view", "/view?embed")
+                      }
+                      className="w-full h-full border-0"
+                      allowFullScreen
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLinkModal(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!canvaUrl.trim()}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm"
+                >
+                  Save Presentation
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Facilitator Sign In Modal */}
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden">
+            <div className="p-6 bg-gradient-to-br from-indigo-900 via-indigo-800 to-indigo-950 text-white">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-indigo-200 text-xs font-medium mb-3 backdrop-blur-md">
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                Facilitator Authentication Required
+              </div>
+              <h3 className="text-xl font-bold">Sign In to Continue</h3>
+              <p className="text-xs text-indigo-200 mt-1">
+                Facilitator controls (state changes, timers, activities, scoring, and teams) are protected and require a signed-in facilitator or administrator account.
+              </p>
+            </div>
+
+            <form onSubmit={handleLogin} className="p-6 space-y-4">
+              {loginError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
+                  {loginError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Username or Email
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={loginUsername}
+                  onChange={(e) => setLoginUsername(e.target.value)}
+                  placeholder="e.g. facilitator_maya or admin_alex"
+                  className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="Enter password"
+                  className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                />
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[11px] text-slate-500 space-y-1">
+                <span className="font-semibold text-slate-700 block">Available Demo Accounts:</span>
+                <div>• Facilitator: <code className="text-indigo-600 font-mono">facilitator_maya</code> / <code className="text-indigo-600 font-mono">FacilitatorPass123</code></div>
+                <div>• Administrator: <code className="text-indigo-600 font-mono">admin_alex</code> / <code className="text-indigo-600 font-mono">AdminPassword123</code></div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLoginModal(false)}
+                  className="text-xs text-slate-500 hover:text-slate-700 font-medium transition"
+                >
+                  Dismiss
+                </button>
+                <button
+                  type="submit"
+                  disabled={loginLoading}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition shadow-md flex items-center gap-2"
+                >
+                  {loginLoading ? "Authenticating..." : "Sign In & Unlock"}
                 </button>
               </div>
             </form>

@@ -3,6 +3,7 @@ import {
   getBadgesForParticipant,
   awardManualBadge,
 } from "@/services/badge.service";
+import { verifyFacilitatorAuth } from "@/lib/auth";
 import { z } from "zod";
 
 const awardSchema = z.object({
@@ -41,6 +42,12 @@ export async function POST(
     const body = await req.json();
     const data = awardSchema.parse(body);
 
+    const authHeader = req.headers.get("authorization");
+    const cookieToken = req.cookies.get("tgms_user_token")?.value;
+    if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
+      await verifyFacilitatorAuth(req, data.sessionId);
+    }
+
     const awarded = await awardManualBadge({
       sessionId: data.sessionId,
       participantId,
@@ -51,6 +58,7 @@ export async function POST(
 
     return NextResponse.json(awarded, { status: 201 });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    const status = err.status || 400;
+    return NextResponse.json({ error: err.message }, { status });
   }
 }

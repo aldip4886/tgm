@@ -6,7 +6,11 @@ import { getSocket } from "@/lib/socket-client";
 import { DigitalTimer } from "@/components/DigitalTimer";
 import { CollaborativeWhiteboard } from "@/components/CollaborativeWhiteboard";
 import { LeaderboardView } from "@/components/LeaderboardView";
-import { Presentation, Sparkles, QrCode, Trophy } from "lucide-react";
+import { PollQuizView } from "@/components/interactions/PollQuizView";
+import { WordCloudView } from "@/components/interactions/WordCloudView";
+import { QAView } from "@/components/interactions/QAView";
+import { RankingView } from "@/components/interactions/RankingView";
+import { Presentation, Sparkles, QrCode, Trophy, Activity as ActivityIcon } from "lucide-react";
 
 export default function ProjectorView() {
   const { id } = useParams<{ id: string }>();
@@ -14,6 +18,8 @@ export default function ProjectorView() {
   const [currentSlide, setCurrentSlide] = useState(1);
   const [currentMapping, setCurrentMapping] = useState<any>(null);
   const [timerState, setTimerState] = useState<any>(null);
+  const [activeActivity, setActiveActivity] = useState<any>(null);
+  const [viewOverride, setViewOverride] = useState<"presentation" | "interaction" | null>(null);
   const [projectedWhiteboard, setProjectedWhiteboard] = useState<any>(null);
   const [leaderboardData, setLeaderboardData] = useState<{ participants: any[]; teams: any[] }>({
     participants: [],
@@ -39,14 +45,19 @@ export default function ProjectorView() {
         const mapping = (data.presentationMappings || []).find((m: any) => m.slideNumber === 1);
         if (mapping) setCurrentMapping(mapping);
 
-        // Check active activity timer
-        const activeAct = (data.activities || []).find((a: any) => a.state === "ACTIVE");
-        if (activeAct && activeAct.timerStatus !== "STOPPED") {
-          setTimerState({
-            status: activeAct.timerStatus,
-            endsAt: activeAct.timerEndsAt,
-            remainingMs: activeAct.timerRemainingMs,
-          });
+        // Check active activity
+        const activeAct = (data.activities || []).find(
+          (a: any) => a.state === "ACTIVE" || a.state === "LOCKED"
+        );
+        if (activeAct) {
+          setActiveActivity(activeAct);
+          if (activeAct.timerStatus !== "STOPPED") {
+            setTimerState({
+              status: activeAct.timerStatus,
+              endsAt: activeAct.timerEndsAt,
+              remainingMs: activeAct.timerRemainingMs,
+            });
+          }
         }
 
         if (lbRes.ok) {
@@ -107,6 +118,18 @@ export default function ProjectorView() {
       }
     });
 
+    socket.on("presentation:linked", (data: { canvaPresentationUrl: string; slideCount: number }) => {
+      setSession((prev: any) =>
+        prev
+          ? {
+              ...prev,
+              canvaPresentationUrl: data.canvaPresentationUrl,
+              slideCount: data.slideCount,
+            }
+          : prev
+      );
+    });
+
     socket.on("leaderboard:visibility_updated", ({ visibility }: any) => {
       setLeaderboardVisibility(visibility);
       loadLeaderboardData();
@@ -116,12 +139,23 @@ export default function ProjectorView() {
       loadLeaderboardData();
     });
 
+    socket.on("activity:state_updated", ({ activity }: { activity: any }) => {
+      if (activity.state === "ACTIVE" || activity.state === "LOCKED") {
+        setActiveActivity(activity);
+        setViewOverride(null);
+      } else {
+        setActiveActivity((prev: any) => (prev?.id === activity.id ? null : prev));
+      }
+    });
+
     return () => {
       socket.off("presentation:slide_updated");
+      socket.off("presentation:linked");
       socket.off("timer:updated");
       socket.off("whiteboard:projected");
       socket.off("leaderboard:visibility_updated");
       socket.off("leaderboard:scores_updated");
+      socket.off("activity:state_updated");
     };
   }, [id]);
 
@@ -175,15 +209,31 @@ export default function ProjectorView() {
           </div>
         )}
 
-        {/* Live Standings Button & Join Prompt */}
+        {/* Live Standings Button, Interaction Toggle & Join Prompt */}
         <div className="flex items-center gap-4">
+          {activeActivity &&
+            ["POLL", "QUIZ", "WORD_CLOUD", "QA", "RANKING"].includes(activeActivity.type) &&
+            embedUrl && (
+              <button
+                onClick={() =>
+                  setViewOverride(viewOverride === "presentation" ? "interaction" : "presentation")
+                }
+                className="flex items-center gap-2 px-3.5 py-2 bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 rounded-xl text-xs font-bold hover:bg-indigo-600/30 transition shadow"
+              >
+                <ActivityIcon className="w-4 h-4 text-indigo-400" />
+                <span>
+                  {viewOverride === "presentation" ? "Show Live Interaction" : "Show Presentation"}
+                </span>
+              </button>
+            )}
+
           {leaderboardVisibility === "LIVE" && (
             <button
               onClick={() => setShowLeaderboard(!showLeaderboard)}
               className="flex items-center gap-2 px-3.5 py-2 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold hover:bg-amber-500/30 transition shadow"
             >
               <Trophy className="w-4 h-4 text-amber-400" />
-              <span>{showLeaderboard ? "Show Presentation" : "Show Standings"}</span>
+              <span>{showLeaderboard ? "Show Screen" : "Show Standings"}</span>
             </button>
           )}
 
@@ -231,6 +281,36 @@ export default function ProjectorView() {
                 initialSceneData={projectedWhiteboard.sceneData}
               />
             </div>
+          </div>
+        ) : activeActivity &&
+          ["POLL", "QUIZ", "WORD_CLOUD", "QA", "RANKING"].includes(activeActivity.type) &&
+          viewOverride !== "presentation" ? (
+          <div className="w-full max-w-5xl bg-slate-900 rounded-3xl p-6 border border-slate-800 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            {activeActivity.type === "POLL" || activeActivity.type === "QUIZ" ? (
+              <PollQuizView
+                activity={activeActivity}
+                mode="projector"
+                sessionId={id}
+              />
+            ) : activeActivity.type === "WORD_CLOUD" ? (
+              <WordCloudView
+                activity={activeActivity}
+                mode="projector"
+                sessionId={id}
+              />
+            ) : activeActivity.type === "QA" ? (
+              <QAView
+                activity={activeActivity}
+                mode="projector"
+                sessionId={id}
+              />
+            ) : activeActivity.type === "RANKING" ? (
+              <RankingView
+                activity={activeActivity}
+                mode="projector"
+                sessionId={id}
+              />
+            ) : null}
           </div>
         ) : embedUrl ? (
           <div className="w-full h-full max-h-[85vh] rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-black">

@@ -7,6 +7,12 @@ import { DigitalTimer } from "@/components/DigitalTimer";
 import { CollaborativeWhiteboard } from "@/components/CollaborativeWhiteboard";
 import { LeaderboardView } from "@/components/LeaderboardView";
 import { BadgeCelebrationModal } from "@/components/BadgeCelebrationModal";
+import { PollQuizView } from "@/components/interactions/PollQuizView";
+import { WordCloudView } from "@/components/interactions/WordCloudView";
+import { QAView } from "@/components/interactions/QAView";
+import { RankingView } from "@/components/interactions/RankingView";
+import { AwardNotificationModal } from "@/components/AwardNotificationModal";
+import { ProjectedWorkModal } from "@/components/ProjectedWorkModal";
 import {
   Sparkles,
   Users,
@@ -20,6 +26,11 @@ import {
   MessageCircle,
   Plus,
   Trophy,
+  ExternalLink,
+  Presentation,
+  Palette,
+  HelpCircle,
+  X,
 } from "lucide-react";
 
 export default function ParticipantSessionView() {
@@ -52,6 +63,23 @@ export default function ParticipantSessionView() {
   // Badges State
   const [badges, setBadges] = useState<any[]>([]);
   const [celebratingBadge, setCelebratingBadge] = useState<{ badge: any; reason?: string } | null>(null);
+
+  // Pop-up Award Notification State (Points & Comments)
+  const [awardedNotification, setAwardedNotification] = useState<{
+    type: "POINTS" | "COMMENT";
+    amount?: number;
+    reason?: string;
+    giverName?: string;
+    commenterName?: string;
+    content?: string;
+  } | null>(null);
+
+  // Projected Work & Inspection State
+  const [projectedWork, setProjectedWork] = useState<any | null>(null);
+  const [showProjectedModal, setShowProjectedModal] = useState(false);
+  const [showRewardsExplainer, setShowRewardsExplainer] = useState(false);
+  const [pointReasonInputs, setPointReasonInputs] = useState<Record<string, string>>({});
+  const [activeReasonResponseId, setActiveReasonResponseId] = useState<string | null>(null);
 
   useEffect(() => {
     async function initParticipant() {
@@ -86,7 +114,7 @@ export default function ParticipantSessionView() {
           const current = actData.find((a: any) => a.state === "ACTIVE" || a.state === "LOCKED");
           if (current) {
             setActiveActivity(current);
-            if (current.type === "WHITEBOARD") {
+            if (current.type?.startsWith("WHITEBOARD")) {
               loadWhiteboard(current.id, partData.id, partData.teamId);
             } else {
               loadActivityResponses(current.id, storedToken);
@@ -122,7 +150,7 @@ export default function ParticipantSessionView() {
         socket.on("activity:state_updated", ({ activity }: { activity: any }) => {
           if (activity.state === "ACTIVE" || activity.state === "LOCKED") {
             setActiveActivity(activity);
-            if (activity.type === "WHITEBOARD") {
+            if (activity.type?.startsWith("WHITEBOARD")) {
               loadWhiteboard(activity.id, partData.id, partData.teamId);
             } else {
               loadActivityResponses(activity.id, storedToken);
@@ -188,6 +216,136 @@ export default function ParticipantSessionView() {
               if (data?.id) setParticipant(data);
             });
         });
+
+        // Pop-up when points awarded by facilitator or peer
+        socket.on("point:awarded_notification", ({ recipientId, amount, reason, giverName }: any) => {
+          if (recipientId === partData.id) {
+            setAwardedNotification({
+              type: "POINTS",
+              amount,
+              reason,
+              giverName: giverName || "Facilitator",
+            });
+            loadLeaderboard();
+            fetch("/api/sessions/reconnect", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ token: storedToken }),
+            })
+              .then((r) => r.json())
+              .then((data) => {
+                if (data?.id) setParticipant(data);
+              })
+              .catch(console.error);
+          }
+        });
+
+        // Pop-up when comment received
+        socket.on("comment:received_notification", ({ recipientId, commenterName, content }: any) => {
+          if (recipientId === partData.id) {
+            setAwardedNotification({
+              type: "COMMENT",
+              commenterName: commenterName || "A peer",
+              content,
+            });
+          }
+        });
+
+        // Facilitator projected whiteboard
+        socket.on("whiteboard:projected", async ({ whiteboardId }: { whiteboardId: string }) => {
+          if (whiteboardId) {
+            try {
+              const res = await fetch(`/api/whiteboards/${whiteboardId}`);
+              if (res.ok) {
+                const wb = await res.json();
+                let responseId = undefined;
+                let reactions: any[] = [];
+                let comments: any[] = [];
+                try {
+                  const rRes = await fetch(`/api/activities/${wb.activityId}/responses`, {
+                    headers: { Authorization: `Bearer ${storedToken}` },
+                  });
+                  if (rRes.ok) {
+                    const allR = await rRes.json();
+                    const matching = allR.find(
+                      (r: any) => r.color === "WHITEBOARD" && r.content.includes(whiteboardId)
+                    );
+                    if (matching) {
+                      responseId = matching.id;
+                      reactions = matching.reactions || [];
+                      comments = matching.comments || [];
+                    }
+                  }
+                } catch {}
+
+                setProjectedWork({
+                  type: "WHITEBOARD",
+                  id: wb.id,
+                  title: wb.team?.name
+                    ? `Team ${wb.team.name}'s Canvas`
+                    : wb.participant?.displayName
+                    ? `${wb.participant.displayName}'s Canvas`
+                    : "Collaborative Whiteboard",
+                  authorName: wb.participant?.displayName,
+                  teamName: wb.team?.name,
+                  participantId: wb.participantId,
+                  sceneData: wb.sceneData,
+                  responseId,
+                  reactions,
+                  comments,
+                });
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          } else {
+            setProjectedWork(null);
+            setShowProjectedModal(false);
+          }
+        });
+
+        // Facilitator projected response
+        socket.on("response:projected", async ({ responseId }: { responseId: string }) => {
+          if (responseId) {
+            try {
+              if (activeActivity) {
+                const rRes = await fetch(`/api/activities/${activeActivity.id}/responses`, {
+                  headers: { Authorization: `Bearer ${storedToken}` },
+                });
+                if (rRes.ok) {
+                  const allR = await rRes.json();
+                  const target = allR.find((r: any) => r.id === responseId);
+                  if (target) {
+                    setProjectedWork({
+                      type: "RESPONSE",
+                      id: target.id,
+                      responseId: target.id,
+                      title: "Participant Submission",
+                      authorName: target.participant?.displayName,
+                      teamName: target.team?.name,
+                      participantId: target.participantId,
+                      content: target.content,
+                      reactions: target.reactions || [],
+                      comments: target.comments || [],
+                    });
+                  }
+                }
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          } else {
+            setProjectedWork(null);
+            setShowProjectedModal(false);
+          }
+        });
+
+        // Reload responses when any whiteboard is submitted
+        socket.on("whiteboard:submitted", () => {
+          if (activeActivity) {
+            loadActivityResponses(activeActivity.id, storedToken);
+          }
+        });
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -207,8 +365,13 @@ export default function ParticipantSessionView() {
       socket.off("timer:updated");
       socket.off("leaderboard:visibility_updated");
       socket.off("leaderboard:scores_updated");
+      socket.off("point:awarded_notification");
+      socket.off("comment:received_notification");
+      socket.off("whiteboard:projected");
+      socket.off("response:projected");
+      socket.off("whiteboard:submitted");
     };
-  }, [id]);
+  }, [id, activeActivity]);
 
   const loadBadges = async (partId: string) => {
     try {
@@ -327,7 +490,7 @@ export default function ParticipantSessionView() {
     }
   };
 
-  const handleAwardPoints = async (responseId: string, amount: number) => {
+  const handleAwardPoints = async (responseId: string, amount: number, reason?: string) => {
     try {
       const res = await fetch(`/api/responses/${responseId}/points`, {
         method: "POST",
@@ -335,7 +498,7 @@ export default function ParticipantSessionView() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ amount }),
+        body: JSON.stringify({ amount, reason: reason?.trim() || undefined }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -344,6 +507,8 @@ export default function ParticipantSessionView() {
       }
       const data = await res.json();
       setParticipant((prev: any) => ({ ...prev, peerPointBudget: data.remainingBudget }));
+      setActiveReasonResponseId(null);
+      setPointReasonInputs((prev) => ({ ...prev, [responseId]: "" }));
       if (activeActivity) loadActivityResponses(activeActivity.id, token);
       const socket = getSocket();
       socket.emit("leaderboard:points_awarded", { sessionId: id });
@@ -454,17 +619,68 @@ export default function ParticipantSessionView() {
             <Heart className="w-3.5 h-3.5 text-indigo-600" />
             <span>{participant.peerPointBudget} budget</span>
           </div>
+
+          <button
+            onClick={() => setShowRewardsExplainer(!showRewardsExplainer)}
+            className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-xl hover:bg-slate-100 transition"
+            title="Peer Rewards & Points Rules"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-2xl w-full mx-auto p-6 flex flex-col justify-start space-y-6">
-        {(showLeaderboard || leaderboardVisibility === "LIVE") && (
-          <div className="animate-in fade-in slide-in-from-top-4 duration-200">
-            <LeaderboardView
-              participants={leaderboardData.participants}
-              teams={leaderboardData.teams}
-            />
+        {/* Peer Rewards Explainer Card */}
+        {showRewardsExplainer && (
+          <div className="bg-gradient-to-r from-amber-50 to-indigo-50 border border-amber-200/80 rounded-2xl p-4 text-xs text-slate-700 shadow-sm relative animate-in fade-in duration-200">
+            <button
+              onClick={() => setShowRewardsExplainer(false)}
+              className="absolute top-3 right-3 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-2 font-bold text-amber-900 mb-1.5">
+              <Sparkles className="w-4 h-4 text-amber-600" />
+              <span>Peer Recognition & Point Rules</span>
+            </div>
+            <ul className="space-y-1 text-slate-600 pl-4 list-disc">
+              <li><strong>20 pts Peer Budget:</strong> Each participant starts with 20 points to gift during the session.</li>
+              <li><strong>Gift +1, +3, or +5:</strong> Award points directly to peer submissions and their team!</li>
+              <li><strong>Free Appreciation:</strong> Likes and constructive feedback comments cost 0 points.</li>
+              <li><strong>Fairness:</strong> You cannot award points to your own submissions.</li>
+            </ul>
+          </div>
+        )}
+
+        {/* Facilitator Projected Work Banner */}
+        {projectedWork && (
+          <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white p-4 rounded-2xl shadow-md border border-white/20 flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
+                <Presentation className="w-5 h-5 text-amber-300" />
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                  <span>Facilitator is Projecting</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                </div>
+                <h4 className="text-sm font-bold leading-tight">
+                  {projectedWork.title || "Live Participant Work"}
+                </h4>
+                <p className="text-xs text-white/80">
+                  By {projectedWork.teamName ? `Team ${projectedWork.teamName}` : projectedWork.authorName || "Participant"} • Click to view canvas, comment, & award points!
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowProjectedModal(true)}
+              className="w-full sm:w-auto px-4 py-2 bg-white text-indigo-700 hover:bg-slate-100 rounded-xl text-xs font-bold shadow-md transition flex items-center justify-center gap-1.5 shrink-0"
+            >
+              <span>View & Give Points</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
 
@@ -502,9 +718,83 @@ export default function ParticipantSessionView() {
                 {activeActivity.prompt}
               </p>
 
-              {/* Whiteboard Workspace OR Text Response Submission */}
-              {activeActivity.type === "WHITEBOARD" ? (
+              {/* Specialized Interaction Views */}
+              {activeActivity.type === "POLL" || activeActivity.type === "QUIZ" ? (
                 <div className="mt-4">
+                  <PollQuizView
+                    activity={activeActivity}
+                    mode="participant"
+                    sessionId={id}
+                    participantId={participant?.id}
+                    token={token}
+                    myResponse={myResponse}
+                    onVoteSubmitted={(_opt, isCorrect, pts) => {
+                      if (isCorrect && pts) {
+                        setParticipant((prev: any) => ({
+                          ...prev,
+                          totalPoints: (prev?.totalPoints || 0) + pts,
+                        }));
+                      }
+                    }}
+                  />
+                </div>
+              ) : activeActivity.type === "WORD_CLOUD" ? (
+                <div className="mt-4">
+                  <WordCloudView
+                    activity={activeActivity}
+                    mode="participant"
+                    sessionId={id}
+                    token={token}
+                  />
+                </div>
+              ) : activeActivity.type === "QA" ? (
+                <div className="mt-4">
+                  <QAView
+                    activity={activeActivity}
+                    mode="participant"
+                    sessionId={id}
+                    participantId={participant?.id}
+                    token={token}
+                  />
+                </div>
+              ) : activeActivity.type === "RANKING" ? (
+                <div className="mt-4">
+                  <RankingView
+                    activity={activeActivity}
+                    mode="participant"
+                    sessionId={id}
+                    token={token}
+                    myResponse={myResponse}
+                  />
+                </div>
+              ) : activeActivity.type?.startsWith("WHITEBOARD") ? (
+                <div className="mt-4">
+                  {/* Scope Indicator Banner */}
+                  {activeActivity.type === "WHITEBOARD_TEAM" && (
+                    <div className="mb-3 px-3.5 py-2 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-800 flex items-center justify-between">
+                      <span className="font-medium">🤝 Team Whiteboard: Collaborative canvas with your team.</span>
+                      <span className="font-bold bg-white px-2 py-0.5 rounded border border-indigo-200">
+                        {participant.team ? participant.team.name : "Unassigned"}
+                      </span>
+                    </div>
+                  )}
+                  {activeActivity.type === "WHITEBOARD_INDIVIDUAL" && (
+                    <div className="mb-3 px-3.5 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between">
+                      <span className="font-medium">🔒 Individual Whiteboard: Only visible to you and the facilitator.</span>
+                      <span className="font-bold bg-white px-2 py-0.5 rounded border border-emerald-200">
+                        {participant.displayName}
+                      </span>
+                    </div>
+                  )}
+                  {activeActivity.type === "WHITEBOARD_PUBLIC" && (
+                    <div className="mb-3 px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between">
+                      <span className="font-medium">🌐 Public Whiteboard: Shared live with the entire room!</span>
+                      <span className="font-bold bg-white px-2 py-0.5 rounded border border-amber-200">
+                        Public Canvas
+                      </span>
+                    </div>
+                  )}
+
                   {myWhiteboard ? (
                     <CollaborativeWhiteboard
                       whiteboardId={myWhiteboard.id}
@@ -559,12 +849,20 @@ export default function ParticipantSessionView() {
               )}
             </div>
 
-            {/* Peer Responses Feed */}
-            {(activeActivity.revealMode === "IMMEDIATE" || activeActivity.state === "LOCKED") && (
+            {/* Peer Contributions Feed (Works, Whiteboards, Messages, & Points) */}
+            {((activeActivity.type === "OPEN_QUESTION" || !activeActivity.type || activeActivity.type === "OPEN_ENDED") &&
+              (activeActivity.revealMode === "IMMEDIATE" || activeActivity.state === "LOCKED") ||
+              (activeActivity.type?.startsWith("WHITEBOARD") && peerResponses.length > 0)) && (
               <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
-                <h3 className="text-sm font-bold text-slate-800 mb-3">
-                  Participant Contributions ({peerResponses.length})
-                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                    <Users className="w-4 h-4 text-indigo-600" />
+                    <span>Participant Contributions ({peerResponses.length})</span>
+                  </h3>
+                  <span className="text-[11px] text-slate-400">
+                    {participant.peerPointBudget} budget remaining
+                  </span>
+                </div>
 
                 <div className="space-y-4">
                   {peerResponses.map((r) => {
@@ -576,17 +874,83 @@ export default function ParticipantSessionView() {
                     const comments = r.comments || [];
                     const currentComment = commentInputs[r.id] || "";
 
+                    let wbInfo: any = null;
+                    if (r.color === "WHITEBOARD") {
+                      try {
+                        wbInfo = JSON.parse(r.content);
+                      } catch {}
+                    }
+
                     return (
                       <div key={r.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-xs font-bold text-slate-800">
-                            {r.participant?.displayName || "Participant"} {isMine && <span className="text-[10px] text-indigo-600 font-semibold">(You)</span>}
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                            {r.participant?.displayName || "Participant"}{" "}
+                            {isMine && <span className="text-[10px] text-indigo-600 font-semibold">(You)</span>}
+                            {r.team && (
+                              <span className="text-[10px] font-medium bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+                                {r.team.name}
+                              </span>
+                            )}
                           </span>
                           <span className="text-[10px] text-slate-400 font-mono">
                             {new Date(r.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                           </span>
                         </div>
-                        <p className="text-sm text-slate-800 mb-3">{r.content}</p>
+
+                        {wbInfo ? (
+                          <div className="mb-3 p-3 bg-white border border-indigo-100 rounded-xl flex items-center justify-between shadow-sm">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
+                                <Palette className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-bold text-slate-800">
+                                  {wbInfo.title || r.participant?.displayName || "Whiteboard Drawing"}
+                                </h4>
+                                <p className="text-[10px] text-slate-400">Collaborative canvas submission</p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={async () => {
+                                const wbId = wbInfo.whiteboardId;
+                                if (wbId) {
+                                  try {
+                                    const res = await fetch(`/api/whiteboards/${wbId}`);
+                                    if (res.ok) {
+                                      const wb = await res.json();
+                                      setProjectedWork({
+                                        type: "WHITEBOARD",
+                                        id: wb.id,
+                                        title: wb.team?.name
+                                          ? `Team ${wb.team.name}'s Canvas`
+                                          : wb.participant?.displayName
+                                          ? `${wb.participant.displayName}'s Canvas`
+                                          : "Whiteboard Canvas",
+                                        authorName: wb.participant?.displayName,
+                                        teamName: wb.team?.name,
+                                        participantId: wb.participantId,
+                                        sceneData: wb.sceneData,
+                                        responseId: r.id,
+                                        reactions: r.reactions || [],
+                                        comments: r.comments || [],
+                                      });
+                                      setShowProjectedModal(true);
+                                    }
+                                  } catch (e) {
+                                    console.error(e);
+                                  }
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
+                            >
+                              <Presentation className="w-3.5 h-3.5" />
+                              <span>Inspect Canvas</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-slate-800 mb-3">{r.content}</p>
+                        )}
 
                         {/* Interaction Bar */}
                         <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
@@ -611,9 +975,19 @@ export default function ParticipantSessionView() {
                                   <button
                                     key={pts}
                                     disabled={participant.peerPointBudget < pts}
-                                    onClick={() => handleAwardPoints(r.id, pts)}
-                                    title={`Award +${pts} points from your peer budget`}
-                                    className="px-2 py-1 bg-white hover:bg-amber-50 text-amber-800 border border-slate-200 hover:border-amber-300 rounded-lg text-[11px] font-bold transition disabled:opacity-30 disabled:pointer-events-none"
+                                    onClick={() => {
+                                      if (activeReasonResponseId === `${r.id}_${pts}`) {
+                                        setActiveReasonResponseId(null);
+                                      } else {
+                                        setActiveReasonResponseId(`${r.id}_${pts}`);
+                                      }
+                                    }}
+                                    title={`Award +${pts} points from your peer budget (${participant.peerPointBudget} pts remaining)`}
+                                    className={`px-2 py-1 rounded-lg text-[11px] font-bold transition border ${
+                                      activeReasonResponseId === `${r.id}_${pts}`
+                                        ? "bg-amber-500 text-white border-amber-600"
+                                        : "bg-white hover:bg-amber-50 text-amber-800 border-slate-200 hover:border-amber-300"
+                                    } disabled:opacity-30 disabled:pointer-events-none`}
                                   >
                                     +{pts}
                                   </button>
@@ -626,6 +1000,40 @@ export default function ParticipantSessionView() {
                             {comments.length} {comments.length === 1 ? "comment" : "comments"}
                           </span>
                         </div>
+
+                        {/* Reason prompt when points clicked */}
+                        {activeReasonResponseId?.startsWith(r.id) && (
+                          <div className="mt-2.5 p-2.5 bg-amber-50/80 border border-amber-200 rounded-xl flex flex-col sm:flex-row items-stretch sm:items-center gap-2 animate-in fade-in duration-150">
+                            <input
+                              type="text"
+                              placeholder="Reasoning (e.g. 'Great insight!')..."
+                              value={pointReasonInputs[r.id] || ""}
+                              onChange={(e) =>
+                                setPointReasonInputs((prev) => ({ ...prev, [r.id]: e.target.value }))
+                              }
+                              className="flex-1 px-2.5 py-1 text-xs bg-white border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
+                            />
+                            <div className="flex items-center gap-1.5 justify-end">
+                              <button
+                                type="button"
+                                onClick={() => setActiveReasonResponseId(null)}
+                                className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-700"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const pts = parseInt(activeReasonResponseId.split("_")[1], 10);
+                                  handleAwardPoints(r.id, pts, pointReasonInputs[r.id]);
+                                }}
+                                className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-sm transition"
+                              >
+                                Gift +{activeReasonResponseId.split("_")[1]} Pts
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Threaded Comments Section */}
                         {comments.length > 0 && (
@@ -654,7 +1062,7 @@ export default function ParticipantSessionView() {
                             onChange={(e) =>
                               setCommentInputs((prev) => ({ ...prev, [r.id]: e.target.value }))
                             }
-                            placeholder="Write a peer comment..."
+                            placeholder="Write a constructive peer comment..."
                             className="flex-1 px-3 py-1.5 text-xs bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           />
                           <button
@@ -702,7 +1110,53 @@ export default function ParticipantSessionView() {
             </div>
           </div>
         )}
+
+        {/* Leaderboard View: Placed at the VERY BOTTOM of the participant page */}
+        {(showLeaderboard || leaderboardVisibility === "LIVE") && (
+          <div id="session-leaderboard" className="pt-6 border-t border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-300">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-amber-500" />
+                <h3 className="text-sm font-bold text-slate-800">Session Standings</h3>
+              </div>
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                {leaderboardVisibility === "LIVE" ? "Live Updates" : "Revealed by Host"}
+              </span>
+            </div>
+            <LeaderboardView
+              participants={leaderboardData.participants}
+              teams={leaderboardData.teams}
+            />
+          </div>
+        )}
       </main>
+
+      {/* Pop-up Award Notification Modal (Points & Comments) */}
+      {awardedNotification && (
+        <AwardNotificationModal
+          type={awardedNotification.type}
+          amount={awardedNotification.amount}
+          reason={awardedNotification.reason}
+          giverName={awardedNotification.giverName}
+          commenterName={awardedNotification.commenterName}
+          content={awardedNotification.content}
+          onClose={() => setAwardedNotification(null)}
+        />
+      )}
+
+      {/* Facilitator Projected Work Modal (Canvas, Likes, Points, Comments) */}
+      {showProjectedModal && projectedWork && (
+        <ProjectedWorkModal
+          work={projectedWork}
+          sessionId={id}
+          currentParticipant={participant}
+          userToken={token}
+          onClose={() => setShowProjectedModal(false)}
+          onPointsAwarded={(newBudget) => {
+            setParticipant((prev: any) => ({ ...prev, peerPointBudget: newBudget }));
+          }}
+        />
+      )}
 
       {celebratingBadge && (
         <BadgeCelebrationModal

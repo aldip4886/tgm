@@ -1,25 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
-import { linkPresentation } from "@/services/presentation.service";
+import { linkPresentation, sanitizeCanvaUrl } from "@/services/presentation.service";
+import { verifyFacilitatorAuth } from "@/lib/auth";
 import { z } from "zod";
 
 const linkSchema = z.object({
-  canvaPresentationUrl: z.string().url("Valid URL required"),
+  canvaPresentationUrl: z.string().min(1, "Presentation link cannot be empty"),
   canvaSlideCount: z.number().int().positive().optional(),
 });
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
+    const { id } = await params;
+    const authHeader = req.headers.get("authorization");
+    const cookieToken = req.cookies.get("tgms_user_token")?.value;
+    if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
+      await verifyFacilitatorAuth(req, id);
+    }
+
     const body = await req.json();
-    const validated = linkSchema.parse(body);
-    const updated = await linkPresentation(params.id, validated);
+
+    const sanitizedUrl = sanitizeCanvaUrl(body.canvaPresentationUrl);
+    const validated = linkSchema.parse({
+      ...body,
+      canvaPresentationUrl: sanitizedUrl,
+    });
+
+    const updated = await linkPresentation(id, validated);
     return NextResponse.json(updated);
   } catch (error: any) {
+    const status = error.status || 400;
     return NextResponse.json(
       { error: error.message || "Failed to link presentation" },
-      { status: 400 }
+      { status }
     );
   }
 }

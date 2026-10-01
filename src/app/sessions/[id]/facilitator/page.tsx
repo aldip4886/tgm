@@ -28,6 +28,7 @@ import {
   ArrowRightLeft,
   Trophy,
   Award,
+  Download,
 } from "lucide-react";
 import { LeaderboardView } from "@/components/LeaderboardView";
 
@@ -506,6 +507,24 @@ export default function FacilitatorDashboard() {
     }
   };
 
+  const handleConcludeSession = async () => {
+    if (!confirm("Are you sure you want to conclude this session? This will complete all active activities.")) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/sessions/${id}/conclude`, { method: "POST" });
+      if (res.ok) {
+        setSession((prev: any) => ({ ...prev, status: "COMPLETED" }));
+        setActiveActivity(null);
+        const aRes = await fetch(`/api/sessions/${id}/activities`);
+        if (aRes.ok) setActivities(await aRes.json());
+        alert("Session successfully concluded. You can now download the complete JSON dataset.");
+      }
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   if (loading || !session) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
@@ -559,6 +578,27 @@ export default function FacilitatorDashboard() {
             <ExternalLink className="w-4 h-4" />
             Launch Projector View
           </Link>
+
+          <a
+            href={`/api/sessions/${id}/export/json`}
+            download
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 font-medium text-sm rounded-xl border border-slate-200 shadow-sm transition"
+            title="Download Complete Session JSON Dataset"
+          >
+            <Download className="w-4 h-4 text-slate-500" />
+            Export JSON
+          </a>
+
+          {session.status !== "COMPLETED" && (
+            <button
+              onClick={handleConcludeSession}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium text-sm rounded-xl border border-rose-200 shadow-sm transition"
+              title="Conclude Session & Lock Activities"
+            >
+              <CheckCircle className="w-4 h-4 text-rose-600" />
+              Conclude
+            </button>
+          )}
         </div>
       </header>
 

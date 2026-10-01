@@ -97,6 +97,14 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
     socket.on("whiteboard:project", ({ sessionId, whiteboardId }: { sessionId: string; whiteboardId: string }) => {
       io?.to(`session:${sessionId}`).emit("whiteboard:projected", { whiteboardId });
     });
+
+    socket.on("leaderboard:visibility_changed", ({ sessionId, visibility }: { sessionId: string; visibility: string }) => {
+      io?.to(`session:${sessionId}`).emit("leaderboard:visibility_updated", { visibility });
+    });
+
+    socket.on("leaderboard:points_awarded", ({ sessionId }: { sessionId: string }) => {
+      io?.to(`session:${sessionId}`).emit("leaderboard:scores_updated");
+    });
   });
 
   return io;

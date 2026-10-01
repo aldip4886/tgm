@@ -26,7 +26,10 @@ import {
   MessageSquare,
   Shuffle,
   ArrowRightLeft,
+  Trophy,
+  Award,
 } from "lucide-react";
+import { LeaderboardView } from "@/components/LeaderboardView";
 
 export default function FacilitatorDashboard() {
   const { id } = useParams<{ id: string }>();
@@ -62,13 +65,26 @@ export default function FacilitatorDashboard() {
   const [splitCount, setSplitCount] = useState(2);
   const [splitting, setSplitting] = useState(false);
 
+  // Leaderboard & Points State
+  const [leaderboardData, setLeaderboardData] = useState<{ participants: any[]; teams: any[] }>({
+    participants: [],
+    teams: [],
+  });
+  const [leaderboardVisibility, setLeaderboardVisibility] = useState("HIDDEN");
+  const [showAwardModal, setShowAwardModal] = useState(false);
+  const [awardTargetParticipant, setAwardTargetParticipant] = useState<string>("");
+  const [awardAmount, setAwardAmount] = useState<number>(10);
+  const [awardCategory, setAwardCategory] = useState<string>("FACILITATOR");
+  const [awardReason, setAwardReason] = useState<string>("");
+
   useEffect(() => {
     async function fetchSessionData() {
       try {
-        const [resSession, resActivities, resTeams] = await Promise.all([
+        const [resSession, resActivities, resTeams, resLb] = await Promise.all([
           fetch(`/api/sessions/${id}`),
           fetch(`/api/sessions/${id}/activities`),
           fetch(`/api/sessions/${id}/teams`),
+          fetch(`/api/sessions/${id}/leaderboard`),
         ]);
 
         if (!resSession.ok) throw new Error("Failed to load session");
@@ -78,6 +94,7 @@ export default function FacilitatorDashboard() {
         setMappings(sessionData.presentationMappings || []);
         if (sessionData.canvaPresentationUrl) setCanvaUrl(sessionData.canvaPresentationUrl);
         if (sessionData.canvaSlideCount) setSlideCount(sessionData.canvaSlideCount);
+        if (sessionData.leaderboardVisibility) setLeaderboardVisibility(sessionData.leaderboardVisibility);
 
         if (resActivities.ok) {
           const actData = await resActivities.json();
@@ -96,6 +113,11 @@ export default function FacilitatorDashboard() {
         if (resTeams.ok) {
           const teamsData = await resTeams.json();
           setTeams(teamsData);
+        }
+
+        if (resLb.ok) {
+          const lbData = await resLb.json();
+          setLeaderboardData({ participants: lbData.participants, teams: lbData.teams });
         }
       } catch (err) {
         console.error(err);
@@ -139,12 +161,20 @@ export default function FacilitatorDashboard() {
       }
     });
 
+    socket.on("leaderboard:scores_updated", () => {
+      loadLeaderboard();
+      fetch(`/api/sessions/${id}`).then((r) => r.json()).then((s) => {
+        if (s?.participants) setParticipants(s.participants);
+      });
+    });
+
     return () => {
       socket.off("session:roster_updated");
       socket.off("team:roster_updated");
       socket.off("team:member_reassigned");
       socket.off("response:added");
       socket.off("whiteboard:submitted");
+      socket.off("leaderboard:scores_updated");
     };
   }, [id, activeActivity?.id]);
 
@@ -156,6 +186,67 @@ export default function FacilitatorDashboard() {
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const loadLeaderboard = async () => {
+    try {
+      const res = await fetch(`/api/sessions/${id}/leaderboard`);
+      if (res.ok) {
+        const data = await res.json();
+        setLeaderboardData({ participants: data.participants, teams: data.teams });
+        if (data.visibility) setLeaderboardVisibility(data.visibility);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleUpdateVisibility = async (newVisibility: "HIDDEN" | "LIVE" | "END_OF_ACTIVITY") => {
+    try {
+      const res = await fetch(`/api/sessions/${id}/leaderboard/visibility`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility: newVisibility }),
+      });
+      if (res.ok) {
+        setLeaderboardVisibility(newVisibility);
+        const socket = getSocket();
+        socket.emit("leaderboard:visibility_changed", { sessionId: id, visibility: newVisibility });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAwardPoints = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!awardTargetParticipant || awardAmount <= 0) return;
+    try {
+      const res = await fetch(`/api/sessions/${id}/points`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          participantId: awardTargetParticipant,
+          category: awardCategory,
+          amount: awardAmount,
+          reason: awardReason,
+        }),
+      });
+      if (res.ok) {
+        setShowAwardModal(false);
+        setAwardReason("");
+        loadLeaderboard();
+        const socket = getSocket();
+        socket.emit("leaderboard:points_awarded", { sessionId: id });
+        const sRes = await fetch(`/api/sessions/${id}`);
+        if (sRes.ok) {
+          const sData = await sRes.json();
+          setParticipants(sData.participants || []);
+        }
+      }
+    } catch (err: any) {
+      alert(err.message);
     }
   };
 
@@ -922,8 +1013,139 @@ export default function FacilitatorDashboard() {
               </div>
             )}
           </div>
+
+          {/* Championship Leaderboard Panel */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-amber-500" />
+                <h2 className="text-base font-bold text-slate-800">Championship Standings</h2>
+              </div>
+              <button
+                onClick={() => setShowAwardModal(true)}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
+              >
+                <Award className="w-3.5 h-3.5" />
+                Award Points
+              </button>
+            </div>
+
+            {/* Visibility Settings Bar */}
+            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <span className="text-xs text-slate-600 font-medium">Audience Visibility:</span>
+              <select
+                value={leaderboardVisibility}
+                onChange={(e) => handleUpdateVisibility(e.target.value as any)}
+                className="text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 font-semibold focus:outline-none"
+              >
+                <option value="HIDDEN">Hidden from Participants</option>
+                <option value="LIVE">Live Streamed to All</option>
+                <option value="END_OF_ACTIVITY">Show upon Activity End</option>
+              </select>
+            </div>
+
+            <LeaderboardView
+              participants={leaderboardData.participants}
+              teams={leaderboardData.teams}
+              compact={true}
+            />
+          </div>
         </div>
       </div>
+
+      {/* Manual Point Award Modal */}
+      {showAwardModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Award className="w-5 h-5 text-indigo-600" />
+                Award Discretionary Points
+              </h3>
+              <button
+                onClick={() => setShowAwardModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-semibold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAwardPoints} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Recipient Participant:</label>
+                <select
+                  required
+                  value={awardTargetParticipant}
+                  onChange={(e) => setAwardTargetParticipant(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                >
+                  <option value="">Select a participant...</option>
+                  {participants.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.displayName} {p.team ? `(${p.team.name})` : ""} - {p.totalPoints} pts
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-slate-700 block mb-1">Category:</label>
+                  <select
+                    value={awardCategory}
+                    onChange={(e) => setAwardCategory(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                  >
+                    <option value="FACILITATOR">Facilitator Award</option>
+                    <option value="CHALLENGE">Challenge</option>
+                    <option value="BONUS">Bonus Point</option>
+                    <option value="PARTICIPATION">Participation</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-700 block mb-1">Point Amount:</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={awardAmount}
+                    onChange={(e) => setAwardAmount(parseInt(e.target.value) || 10)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Reason (Optional):</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Brilliant architecture breakdown"
+                  value={awardReason}
+                  onChange={(e) => setAwardReason(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAwardModal(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!awardTargetParticipant}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm"
+                >
+                  Award Points
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

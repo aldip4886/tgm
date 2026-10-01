@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/lib/socket-client";
 import { DigitalTimer } from "@/components/DigitalTimer";
 import { CollaborativeWhiteboard } from "@/components/CollaborativeWhiteboard";
+import { LeaderboardView } from "@/components/LeaderboardView";
 import {
   Sparkles,
   Users,
@@ -17,6 +18,7 @@ import {
   ThumbsUp,
   MessageCircle,
   Plus,
+  Trophy,
 } from "lucide-react";
 
 export default function ParticipantSessionView() {
@@ -37,6 +39,14 @@ export default function ParticipantSessionView() {
   const [peerResponses, setPeerResponses] = useState<any[]>([]);
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
   const [myWhiteboard, setMyWhiteboard] = useState<any>(null);
+
+  // Leaderboard State
+  const [leaderboardData, setLeaderboardData] = useState<{ participants: any[]; teams: any[] }>({
+    participants: [],
+    teams: [],
+  });
+  const [leaderboardVisibility, setLeaderboardVisibility] = useState("HIDDEN");
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
 
   useEffect(() => {
     async function initParticipant() {
@@ -77,6 +87,14 @@ export default function ParticipantSessionView() {
               loadActivityResponses(current.id, storedToken);
             }
           }
+        }
+
+        // Fetch leaderboard state
+        const lbRes = await fetch(`/api/sessions/${id}/leaderboard`);
+        if (lbRes.ok) {
+          const lbData = await lbRes.json();
+          setLeaderboardData({ participants: lbData.participants, teams: lbData.teams });
+          if (lbData.visibility) setLeaderboardVisibility(lbData.visibility);
         }
 
         // Socket connection
@@ -136,6 +154,24 @@ export default function ParticipantSessionView() {
             prev ? { ...prev, timerStatus, timerEndsAt, timerRemainingMs } : prev
           );
         });
+
+        socket.on("leaderboard:visibility_updated", ({ visibility }: any) => {
+          setLeaderboardVisibility(visibility);
+          loadLeaderboard();
+        });
+
+        socket.on("leaderboard:scores_updated", () => {
+          loadLeaderboard();
+          fetch("/api/sessions/reconnect", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: storedToken }),
+          })
+            .then((r) => r.json())
+            .then((data) => {
+              if (data?.id) setParticipant(data);
+            });
+        });
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -152,8 +188,23 @@ export default function ParticipantSessionView() {
       socket.off("team:roster_updated");
       socket.off("team:member_reassigned");
       socket.off("timer:updated");
+      socket.off("leaderboard:visibility_updated");
+      socket.off("leaderboard:scores_updated");
     };
   }, [id]);
+
+  const loadLeaderboard = async () => {
+    try {
+      const res = await fetch(`/api/sessions/${id}/leaderboard`);
+      if (res.ok) {
+        const data = await res.json();
+        setLeaderboardData({ participants: data.participants, teams: data.teams });
+        if (data.visibility) setLeaderboardVisibility(data.visibility);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const loadWhiteboard = async (activityId: string, partId: string, tId?: string) => {
     try {
@@ -314,6 +365,16 @@ export default function ParticipantSessionView() {
         </div>
 
         <div className="flex items-center gap-3">
+          {leaderboardVisibility !== "HIDDEN" && (
+            <button
+              onClick={() => setShowLeaderboard(!showLeaderboard)}
+              className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-xs font-semibold hover:bg-amber-100 transition shadow-sm"
+            >
+              <Trophy className="w-3.5 h-3.5 text-amber-600" />
+              <span>Standings</span>
+            </button>
+          )}
+
           {participant.team && (
             <div className="flex items-center gap-1.5 px-3 py-1 bg-purple-50 text-purple-800 border border-purple-200 rounded-xl text-xs font-semibold">
               <Users className="w-3.5 h-3.5 text-purple-600" />
@@ -334,7 +395,16 @@ export default function ParticipantSessionView() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-2xl w-full mx-auto p-6 flex flex-col justify-start">
+      <main className="flex-1 max-w-2xl w-full mx-auto p-6 flex flex-col justify-start space-y-6">
+        {(showLeaderboard || leaderboardVisibility === "LIVE") && (
+          <div className="animate-in fade-in slide-in-from-top-4 duration-200">
+            <LeaderboardView
+              participants={leaderboardData.participants}
+              teams={leaderboardData.teams}
+            />
+          </div>
+        )}
+
         {activeActivity ? (
           <div className="space-y-6">
             {/* Active Activity Card */}

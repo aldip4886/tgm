@@ -5,7 +5,8 @@ import { useParams } from "next/navigation";
 import { getSocket } from "@/lib/socket-client";
 import { DigitalTimer } from "@/components/DigitalTimer";
 import { CollaborativeWhiteboard } from "@/components/CollaborativeWhiteboard";
-import { Presentation, Sparkles, QrCode } from "lucide-react";
+import { LeaderboardView } from "@/components/LeaderboardView";
+import { Presentation, Sparkles, QrCode, Trophy } from "lucide-react";
 
 export default function ProjectorView() {
   const { id } = useParams<{ id: string }>();
@@ -14,12 +15,22 @@ export default function ProjectorView() {
   const [currentMapping, setCurrentMapping] = useState<any>(null);
   const [timerState, setTimerState] = useState<any>(null);
   const [projectedWhiteboard, setProjectedWhiteboard] = useState<any>(null);
+  const [leaderboardData, setLeaderboardData] = useState<{ participants: any[]; teams: any[] }>({
+    participants: [],
+    teams: [],
+  });
+  const [leaderboardVisibility, setLeaderboardVisibility] = useState("HIDDEN");
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadSession() {
       try {
-        const res = await fetch(`/api/sessions/${id}`);
+        const [res, lbRes] = await Promise.all([
+          fetch(`/api/sessions/${id}`),
+          fetch(`/api/sessions/${id}/leaderboard`),
+        ]);
+
         if (!res.ok) throw new Error("Failed to load session");
         const data = await res.json();
         setSession(data);
@@ -37,6 +48,12 @@ export default function ProjectorView() {
             remainingMs: activeAct.timerRemainingMs,
           });
         }
+
+        if (lbRes.ok) {
+          const lbData = await lbRes.json();
+          setLeaderboardData({ participants: lbData.participants, teams: lbData.teams });
+          if (lbData.visibility) setLeaderboardVisibility(lbData.visibility);
+        }
       } catch (err) {
         console.error(err);
       } finally {
@@ -45,6 +62,19 @@ export default function ProjectorView() {
     }
 
     loadSession();
+
+    const loadLeaderboardData = async () => {
+      try {
+        const res = await fetch(`/api/sessions/${id}/leaderboard`);
+        if (res.ok) {
+          const lbData = await res.json();
+          setLeaderboardData({ participants: lbData.participants, teams: lbData.teams });
+          if (lbData.visibility) setLeaderboardVisibility(lbData.visibility);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
 
     const socket = getSocket();
     socket.emit("session:join", { sessionId: id });
@@ -77,10 +107,21 @@ export default function ProjectorView() {
       }
     });
 
+    socket.on("leaderboard:visibility_updated", ({ visibility }: any) => {
+      setLeaderboardVisibility(visibility);
+      loadLeaderboardData();
+    });
+
+    socket.on("leaderboard:scores_updated", () => {
+      loadLeaderboardData();
+    });
+
     return () => {
       socket.off("presentation:slide_updated");
       socket.off("timer:updated");
       socket.off("whiteboard:projected");
+      socket.off("leaderboard:visibility_updated");
+      socket.off("leaderboard:scores_updated");
     };
   }, [id]);
 
@@ -134,21 +175,41 @@ export default function ProjectorView() {
           </div>
         )}
 
-        {/* Join Prompt Banner for Audience */}
-        <div className="flex items-center gap-4 bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700">
-          <div className="text-right">
-            <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Join Live</span>
-            <span className="font-mono text-base font-bold text-indigo-400 tracking-wider">{session.code}</span>
-          </div>
-          <div className="p-1.5 bg-indigo-600/30 text-indigo-400 rounded-lg">
-            <QrCode className="w-5 h-5" />
+        {/* Live Standings Button & Join Prompt */}
+        <div className="flex items-center gap-4">
+          {leaderboardVisibility === "LIVE" && (
+            <button
+              onClick={() => setShowLeaderboard(!showLeaderboard)}
+              className="flex items-center gap-2 px-3.5 py-2 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold hover:bg-amber-500/30 transition shadow"
+            >
+              <Trophy className="w-4 h-4 text-amber-400" />
+              <span>{showLeaderboard ? "Show Presentation" : "Show Standings"}</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-4 bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700">
+            <div className="text-right">
+              <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Join Live</span>
+              <span className="font-mono text-base font-bold text-indigo-400 tracking-wider">{session.code}</span>
+            </div>
+            <div className="p-1.5 bg-indigo-600/30 text-indigo-400 rounded-lg">
+              <QrCode className="w-5 h-5" />
+            </div>
           </div>
         </div>
       </header>
 
       {/* Main Projector Presentation Area */}
       <main className="flex-1 flex flex-col items-center justify-center p-6 relative">
-        {projectedWhiteboard ? (
+        {showLeaderboard ? (
+          <div className="w-full max-w-4xl p-6 bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <LeaderboardView
+              theme="dark"
+              participants={leaderboardData.participants}
+              teams={leaderboardData.teams}
+            />
+          </div>
+        ) : projectedWhiteboard ? (
           <div className="w-full max-w-5xl bg-slate-900 rounded-3xl p-6 border border-slate-800 shadow-2xl flex flex-col items-center">
             <div className="w-full flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">

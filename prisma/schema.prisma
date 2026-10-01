@@ -26,6 +26,7 @@ model Session {
   facilitator           User                   @relation(fields: [facilitatorId], references: [id], onDelete: Cascade)
   canvaPresentationUrl  String?
   canvaSlideCount       Int?                   @default(0)
+  leaderboardVisibility String                 @default("HIDDEN") // HIDDEN, LIVE, END_OF_ACTIVITY
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
   participants          SessionParticipant[]

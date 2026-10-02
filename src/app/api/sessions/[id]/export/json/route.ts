@@ -27,9 +27,10 @@ export async function GET(
       },
     });
   } catch (error: any) {
+    const status = error.status || 500;
     return NextResponse.json(
       { error: error.message || "Failed to export session dataset" },
-      { status: 500 }
+      { status }
     );
   }
 }

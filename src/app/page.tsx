@@ -104,7 +104,7 @@ export default function HomePage() {
         data.user?.role === "ADMIN" ||
         data.user?.role === "SUPER_ADMIN"
       ) {
-        router.push("/users");
+        router.push("/sessions");
       } else {
         setError("Login successful, but please enter a valid Session Code to join.");
       }
@@ -264,17 +264,24 @@ export default function HomePage() {
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-3 gap-2">
           <Link
-            href="/sessions/create"
-            className="py-2.5 px-3 border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 text-slate-700 font-medium text-xs rounded-xl transition flex items-center justify-center gap-1.5"
+            href="/sessions"
+            className="py-2.5 px-2 border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 text-slate-700 font-medium text-xs rounded-xl transition flex items-center justify-center gap-1"
           >
             <Presentation className="w-3.5 h-3.5 text-indigo-600" />
-            Host Session
+            Sessions
+          </Link>
+          <Link
+            href="/sessions/create"
+            className="py-2.5 px-2 border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 text-slate-700 font-medium text-xs rounded-xl transition flex items-center justify-center gap-1"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+            Host New
           </Link>
           <Link
             href="/users"
-            className="py-2.5 px-3 border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 text-slate-700 font-medium text-xs rounded-xl transition flex items-center justify-center gap-1.5"
+            className="py-2.5 px-2 border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 text-slate-700 font-medium text-xs rounded-xl transition flex items-center justify-center gap-1"
           >
             <Users className="w-3.5 h-3.5 text-indigo-600" />
             User Roster

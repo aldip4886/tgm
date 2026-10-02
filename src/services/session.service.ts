@@ -199,6 +199,74 @@ export async function getSession(sessionId: string) {
       presentationMappings: {
         orderBy: { slideNumber: "asc" },
       },
+      _count: {
+        select: {
+          activities: true,
+          participants: true,
+          teams: true,
+        },
+      },
     },
+  });
+}
+
+export interface UpdateSessionInput {
+  title?: string;
+  description?: string;
+  status?: "WAITING" | "ACTIVE" | "COMPLETED";
+  canvaPresentationUrl?: string | null;
+  canvaSlideCount?: number | null;
+  leaderboardVisibility?: "HIDDEN" | "LIVE" | "END_OF_ACTIVITY";
+}
+
+export async function updateSession(sessionId: string, input: UpdateSessionInput) {
+  return await prisma.$transaction(async (tx) => {
+    const existing = await tx.session.findUnique({ where: { id: sessionId } });
+    if (!existing) throw new Error("Session not found");
+
+    const updated = await tx.session.update({
+      where: { id: sessionId },
+      data: {
+        title: input.title !== undefined ? input.title.trim() : undefined,
+        description: input.description !== undefined ? input.description?.trim() : undefined,
+        status: input.status !== undefined ? input.status : undefined,
+        canvaPresentationUrl: input.canvaPresentationUrl !== undefined ? input.canvaPresentationUrl : undefined,
+        canvaSlideCount: input.canvaSlideCount !== undefined ? input.canvaSlideCount : undefined,
+        leaderboardVisibility: input.leaderboardVisibility !== undefined ? input.leaderboardVisibility : undefined,
+      },
+      include: {
+        facilitator: true,
+        _count: {
+          select: {
+            activities: true,
+            participants: true,
+            teams: true,
+          },
+        },
+      },
+    });
+
+    await tx.event.create({
+      data: {
+        sessionId,
+        eventType: "SESSION_UPDATED",
+        metadata: JSON.stringify(input),
+      },
+    });
+
+    return updated;
+  });
+}
+
+export async function deleteSession(sessionId: string) {
+  return await prisma.$transaction(async (tx) => {
+    const existing = await tx.session.findUnique({ where: { id: sessionId } });
+    if (!existing) throw new Error("Session not found");
+
+    await tx.session.delete({
+      where: { id: sessionId },
+    });
+
+    return { success: true, deletedId: sessionId };
   });
 }

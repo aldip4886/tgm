@@ -27,6 +27,12 @@ export async function GET(
         responses: {
           include: { participant: true },
         },
+        _count: {
+          select: {
+            responses: true,
+            whiteboards: true,
+          },
+        },
       },
     });
     return NextResponse.json(activities);

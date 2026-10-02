@@ -492,3 +492,181 @@ export async function getRankingResults(activityId: string) {
   return { rankedItems, totalSubmissions };
 }
 
+export interface UpdateActivityInput {
+  title?: string;
+  prompt?: string;
+  type?: string;
+  config?: string;
+  revealMode?: string;
+  presentationSlide?: number | null;
+  timerSeconds?: number | null;
+  state?: "DRAFT" | "ACTIVE" | "LOCKED" | "COMPLETED";
+  orderIndex?: number;
+}
+
+export async function getActivityById(activityId: string) {
+  const activity = await prisma.activity.findUnique({
+    where: { id: activityId },
+    include: {
+      session: {
+        include: { facilitator: { select: { id: true, name: true, email: true, username: true } } },
+      },
+      responses: {
+        include: {
+          participant: { select: { id: true, displayName: true, role: true } },
+          reactions: true,
+          comments: {
+            include: { participant: { select: { id: true, displayName: true } } },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      whiteboards: {
+        include: {
+          participant: { select: { id: true, displayName: true } },
+          team: { select: { id: true, name: true } },
+        },
+      },
+    },
+  });
+
+  if (!activity) return null;
+
+  // Compute summary stats
+  const responseCount = activity.responses.length;
+  const whiteboardCount = activity.whiteboards.length;
+
+  let pollQuizStats: any = null;
+  if (activity.type === "POLL" || activity.type === "QUIZ") {
+    let options: string[] = [];
+    let correctAnswer: any = null;
+    let points = 10;
+    if (activity.config) {
+      try {
+        const parsed = JSON.parse(activity.config);
+        options = parsed.options || [];
+        correctAnswer = parsed.correctAnswer;
+        points = parsed.points || 10;
+      } catch {}
+    }
+    const optionCounts: Record<string, number> = {};
+    for (const opt of options) optionCounts[opt] = 0;
+
+    for (const r of activity.responses) {
+      if (!r.isHidden && optionCounts[r.content] !== undefined) {
+        optionCounts[r.content] = (optionCounts[r.content] || 0) + 1;
+      }
+    }
+    pollQuizStats = { options, correctAnswer, points, optionCounts, totalVotes: activity.responses.length };
+  }
+
+  return {
+    ...activity,
+    responseCount,
+    whiteboardCount,
+    pollQuizStats,
+  };
+}
+
+export async function getActivitiesWithStats(sessionId: string) {
+  const activities = await prisma.activity.findMany({
+    where: { sessionId },
+    orderBy: { orderIndex: "asc" },
+    include: {
+      _count: {
+        select: {
+          responses: true,
+          whiteboards: true,
+        },
+      },
+    },
+  });
+
+  return activities.map((act) => ({
+    ...act,
+    responseCount: act._count.responses,
+    whiteboardCount: act._count.whiteboards,
+  }));
+}
+
+export async function updateActivity(activityId: string, input: UpdateActivityInput) {
+  return await prisma.$transaction(async (tx) => {
+    const existing = await tx.activity.findUnique({
+      where: { id: activityId },
+    });
+    if (!existing) throw new Error("Activity not found");
+
+    // If activating, mark others in the same session as COMPLETED (ADR-0005)
+    if (input.state === "ACTIVE" && existing.state !== "ACTIVE") {
+      await tx.activity.updateMany({
+        where: {
+          sessionId: existing.sessionId,
+          state: "ACTIVE",
+          id: { not: activityId },
+        },
+        data: { state: "COMPLETED" },
+      });
+    }
+
+    const updated = await tx.activity.update({
+      where: { id: activityId },
+      data: {
+        title: input.title !== undefined ? input.title.trim() : undefined,
+        prompt: input.prompt !== undefined ? input.prompt.trim() : undefined,
+        type: input.type !== undefined ? input.type : undefined,
+        config: input.config !== undefined ? input.config : undefined,
+        revealMode: input.revealMode !== undefined ? input.revealMode : undefined,
+        presentationSlide: input.presentationSlide !== undefined ? input.presentationSlide : undefined,
+        timerSeconds: input.timerSeconds !== undefined ? input.timerSeconds : undefined,
+        state: input.state !== undefined ? input.state : undefined,
+        orderIndex: input.orderIndex !== undefined ? input.orderIndex : undefined,
+      },
+    });
+
+    await tx.event.create({
+      data: {
+        sessionId: existing.sessionId,
+        activityId,
+        eventType: "ACTIVITY_UPDATED",
+        metadata: JSON.stringify(input),
+      },
+    });
+
+    return updated;
+  });
+}
+
+export async function deleteActivity(activityId: string) {
+  return await prisma.$transaction(async (tx) => {
+    const activity = await tx.activity.findUnique({
+      where: { id: activityId },
+    });
+    if (!activity) throw new Error("Activity not found");
+
+    // Unlink any presentation mappings
+    await tx.presentationMapping.updateMany({
+      where: { activityId },
+      data: { activityId: null },
+    });
+
+    // Delete activity (responses, whiteboards cascade via Prisma schema)
+    await tx.activity.delete({
+      where: { id: activityId },
+    });
+
+    await tx.event.create({
+      data: {
+        sessionId: activity.sessionId,
+        activityId: null,
+        eventType: "ACTIVITY_DELETED",
+        metadata: JSON.stringify({
+          deletedActivityId: activityId,
+          title: activity.title,
+        }),
+      },
+    });
+
+    return { success: true, deletedId: activityId };
+  });
+}
+

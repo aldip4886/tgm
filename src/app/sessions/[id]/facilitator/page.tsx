@@ -33,6 +33,8 @@ import {
   ShieldCheck,
   ThumbsUp,
   MessageCircle,
+  FileSpreadsheet,
+  Trash2,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { LeaderboardView } from "@/components/LeaderboardView";
@@ -663,6 +665,34 @@ export default function FacilitatorDashboard() {
     }
   };
 
+  const handleDeleteActivity = async (activityId: string, title: string) => {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete activity "${title}"? This will delete all participant responses and whiteboard drawings.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/activities/${activityId}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to delete activity");
+      }
+      setActivities((prev) => prev.filter((a) => a.id !== activityId));
+      if (activeActivity?.id === activityId) {
+        setActiveActivity(null);
+        setResponses([]);
+        setWhiteboards([]);
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete activity");
+    }
+  };
+
   const handleToggleProjectWhiteboard = (whiteboardId: string) => {
     const targetId = projectedWbId === whiteboardId ? "" : whiteboardId;
     setProjectedWbId(targetId || null);
@@ -877,6 +907,24 @@ export default function FacilitatorDashboard() {
           >
             <QrCode className="w-5 h-5 text-indigo-600" />
           </button>
+
+          <Link
+            href="/sessions"
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm rounded-xl border border-slate-200 shadow-sm transition"
+            title="Return to Sessions List"
+          >
+            <Presentation className="w-4 h-4 text-indigo-600" />
+            Sessions
+          </Link>
+
+          <Link
+            href={`/activities?sessionId=${id}`}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-sm rounded-xl border border-indigo-200 shadow-sm transition"
+            title="Manage Activities Database for this Session"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
+            Activities Database
+          </Link>
 
           <Link
             href={`/sessions/${id}/projector`}
@@ -1585,9 +1633,18 @@ export default function FacilitatorDashboard() {
             )}
 
             <div>
-              <p className="text-xs font-semibold text-slate-600 mb-3">
-                Session Activities ({activities.length}):
-              </p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-semibold text-slate-600">
+                  Session Activities ({activities.length}):
+                </p>
+                <Link
+                  href={`/activities?sessionId=${id}`}
+                  className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  Manage Database
+                </Link>
+              </div>
               {activities.length === 0 ? (
                 <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200">
                   <Sparkles className="w-6 h-6 text-slate-300 mx-auto mb-2" />
@@ -1632,6 +1689,21 @@ export default function FacilitatorDashboard() {
                             Launch
                           </button>
                         )}
+                        <Link
+                          href={`/activities?sessionId=${id}`}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition"
+                          title="Edit or Inspect in Database"
+                        >
+                          <FileSpreadsheet className="w-3.5 h-3.5" />
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteActivity(act.id, act.title)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition"
+                          title="Delete Activity"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   ))}

@@ -14,6 +14,7 @@ import {
   CheckCircle,
   AlertCircle,
   FileSpreadsheet,
+  Presentation,
   Link as LinkIcon,
 } from "lucide-react";
 
@@ -330,6 +331,36 @@ carol_eng,tech2026,Carol Davis,PARTICIPANT,carol@company.com`;
                 </p>
               </div>
             </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Link
+              href="/sessions"
+              className="px-3 py-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 font-semibold text-xs rounded-xl transition flex items-center gap-1.5"
+            >
+              <Presentation className="w-3.5 h-3.5" />
+              <span>Sessions</span>
+            </Link>
+            <Link
+              href="/users"
+              className="px-3 py-1.5 bg-indigo-50 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 shadow-sm flex items-center gap-1.5"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Users</span>
+            </Link>
+            <Link
+              href="/activities"
+              className="px-3 py-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 font-semibold text-xs rounded-xl transition flex items-center gap-1.5"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Activities Database</span>
+            </Link>
+            <Link
+              href="/sessions/create"
+              className="px-3 py-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 font-semibold text-xs rounded-xl transition"
+            >
+              + Create Session
+            </Link>
           </div>
 
           <div className="flex items-center gap-2">

@@ -3,6 +3,8 @@
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
+import { ParticipantDetailModal } from "@/components/ParticipantDetailModal";
+import { UserAvatarButton } from "@/components/UserAvatarButton";
 import {
   Layers,
   Search,
@@ -71,6 +73,7 @@ export default function ActivitiesDatabasePage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [inspectingParticipantId, setInspectingParticipantId] = useState<string | null>(null);
 
   // Selected Activity for Edit / Inspect / Delete
   const [selectedActivity, setSelectedActivity] = useState<any>(null);
@@ -607,23 +610,14 @@ export default function ActivitiesDatabasePage() {
 
           <div className="flex items-center gap-2">
             {currentUser ? (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-xl border border-slate-200 text-xs">
-                <Shield className="w-3.5 h-3.5 text-indigo-600" />
-                <span className="font-semibold text-slate-800">{currentUser.name}</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                    currentUser.role === "SUPER_ADMIN"
-                      ? "bg-amber-200 text-amber-900"
-                      : currentUser.role === "ADMIN"
-                      ? "bg-rose-100 text-rose-800"
-                      : "bg-purple-100 text-purple-800"
-                  }`}
-                >
-                  {currentUser.role}
-                </span>
+              <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+                <UserAvatarButton
+                  user={currentUser}
+                  onProfileUpdated={(updated) => setCurrentUser(updated)}
+                />
                 <button
                   onClick={handleLogout}
-                  className="text-slate-400 hover:text-slate-600 ml-1 font-normal underline"
+                  className="px-2.5 py-2 text-xs font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-xl transition"
                 >
                   Sign Out
                 </button>
@@ -1613,42 +1607,75 @@ export default function ActivitiesDatabasePage() {
                     </div>
                   )}
 
-                  {/* Responses Table / List */}
+                  {/* Responses / Messages, Replies, Comments, Feedbacks & Points */}
                   <div className="space-y-2">
                     <h4 className="text-xs font-bold text-slate-700">
-                      Participant Responses ({detailedActivity.responses?.length || 0})
+                      Participant Messages, Replies & Comments ({detailedActivity.responses?.length || 0})
                     </h4>
                     {(!detailedActivity.responses || detailedActivity.responses.length === 0) ? (
                       <p className="text-xs text-slate-400 py-3 text-center bg-slate-50 rounded-xl border border-dashed">
                         No responses submitted yet.
                       </p>
                     ) : (
-                      <div className="space-y-2 max-h-60 overflow-y-auto">
-                        {detailedActivity.responses.map((r: any) => (
-                          <div
-                            key={r.id}
-                            className="p-3 bg-white rounded-xl border border-slate-200 text-xs flex items-start justify-between gap-2 shadow-sm"
-                          >
-                            <div>
-                              <p className="font-bold text-slate-800">
-                                {r.participant?.displayName || "Anonymous Participant"}
-                              </p>
-                              <p className="text-slate-600 mt-0.5">{r.content}</p>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0 text-[10px] text-slate-400 font-mono">
-                              {r.reactions?.length > 0 && (
-                                <span className="px-1.5 py-0.5 bg-rose-50 text-rose-600 rounded font-bold">
-                                  ❤️ {r.reactions.length}
-                                </span>
-                              )}
+                      <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                        {detailedActivity.responses.map((r: any) => {
+                          const ptsTotal = (r.points || []).reduce((acc: number, p: any) => acc + p.amount, 0);
+                          return (
+                            <div
+                              key={r.id}
+                              className="p-3 bg-white rounded-xl border border-slate-200 text-xs space-y-2 shadow-sm"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <button
+                                    type="button"
+                                    onClick={() => r.participant?.id && setInspectingParticipantId(r.participant.id)}
+                                    className="font-bold text-indigo-700 hover:underline text-left"
+                                    title="Click to inspect participant profile, points, awards & interactions"
+                                  >
+                                    {r.participant?.displayName || "Anonymous Participant"}
+                                  </button>
+                                  <p className="text-slate-700 mt-0.5 break-words">{r.content}</p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0 text-[10px] text-slate-400 font-mono">
+                                  {ptsTotal > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded font-bold">
+                                      +{ptsTotal} pts
+                                    </span>
+                                  )}
+                                  {r.reactions?.length > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-rose-50 text-rose-600 rounded font-bold">
+                                      👍 {r.reactions.length}
+                                    </span>
+                                  )}
+                                  {r.comments?.length > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded font-bold">
+                                      💬 {r.comments.length}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Nested Replies / Comments */}
                               {r.comments?.length > 0 && (
-                                <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded font-bold">
-                                  💬 {r.comments.length}
-                                </span>
+                                <div className="pt-2 border-t border-slate-100 pl-3 border-l-2 border-indigo-200 space-y-1">
+                                  {r.comments.map((c: any) => (
+                                    <div key={c.id} className="text-[11px] text-slate-600">
+                                      <button
+                                        type="button"
+                                        onClick={() => c.participant?.id && setInspectingParticipantId(c.participant.id)}
+                                        className="font-bold text-slate-800 hover:text-indigo-600 mr-1.5"
+                                      >
+                                        {c.participant?.displayName || "User"}:
+                                      </button>
+                                      <span>{c.content}</span>
+                                    </div>
+                                  ))}
+                                </div>
                               )}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -1669,6 +1696,14 @@ export default function ActivitiesDatabasePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* PARTICIPANT INSPECTOR MODAL */}
+      {inspectingParticipantId && (
+        <ParticipantDetailModal
+          participantId={inspectingParticipantId}
+          onClose={() => setInspectingParticipantId(null)}
+        />
       )}
 
       {/* DELETE CONFIRMATION MODAL */}

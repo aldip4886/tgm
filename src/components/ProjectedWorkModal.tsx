@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { getSocket } from "@/lib/socket-client";
 import { CollaborativeWhiteboard } from "@/components/CollaborativeWhiteboard";
+import { SentConfirmationEffect, SentConfirmationPayload } from "@/components/SentConfirmationEffect";
 import {
   X,
   ThumbsUp,
@@ -56,6 +57,7 @@ export function ProjectedWorkModal({
   const [submittingComment, setSubmittingComment] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [sentConfirmation, setSentConfirmation] = useState<SentConfirmationPayload | null>(null);
 
   const hasLiked = reactions.some(
     (rx) => rx.type === "LIKE" && rx.participantId === currentParticipant?.id
@@ -80,6 +82,12 @@ export function ProjectedWorkModal({
         const data = await res.json();
         if (data.reacted) {
           setReactions((prev) => [...prev, { type: "LIKE", participantId: currentParticipant.id }]);
+          setSentConfirmation({
+            type: "FEEDBACK",
+            title: "Feedback Sent!",
+            detail: `Liked "${work.title || "Projected Work"}"`,
+            recipientName: work.authorName || work.teamName,
+          });
           if (!isMine && (data.recipientId || work.participantId)) {
             const socket = getSocket();
             socket.emit("like:add", {
@@ -130,6 +138,12 @@ export function ProjectedWorkModal({
       setComments((prev) => [...prev, newC]);
       setCommentInput("");
       setSuccessMsg("Comment posted!");
+      setSentConfirmation({
+        type: "COMMENT",
+        title: "Comment Sent!",
+        detail: newC.content,
+        recipientName: work.authorName || work.teamName,
+      });
       if (!isMine && (newC.response?.participantId || work.participantId)) {
         const socket = getSocket();
         socket.emit("comment:add", {
@@ -187,6 +201,12 @@ export function ProjectedWorkModal({
 
       const data = await res.json();
       setSuccessMsg(`Awarded +${amount} points successfully!`);
+      setSentConfirmation({
+        type: "POINTS",
+        title: `+${amount} Points Sent!`,
+        detail: pointReason.trim() || "Great projected work!",
+        recipientName: work.authorName || work.teamName,
+      });
       const socket = getSocket();
       socket.emit("point:award", {
         sessionId,
@@ -211,6 +231,10 @@ export function ProjectedWorkModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/70 backdrop-blur-md animate-in fade-in duration-200">
+      <SentConfirmationEffect
+        confirmation={sentConfirmation}
+        onDone={() => setSentConfirmation(null)}
+      />
       <div className="relative w-full max-w-4xl max-h-[92vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">

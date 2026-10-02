@@ -3,9 +3,12 @@
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ParticipantDetailModal } from "@/components/ParticipantDetailModal";
+import { UserAvatarButton } from "@/components/UserAvatarButton";
 import {
   Presentation,
   Users,
+  UserPlus,
   Layers,
   Play,
   CheckCircle,
@@ -20,6 +23,8 @@ import {
   Shield,
   ExternalLink,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Copy,
   Check,
@@ -33,8 +38,13 @@ import {
   Clock,
   Trophy,
   Share2,
+  MessageSquare,
+  Award,
+  Palette,
 } from "lucide-react";
 import QRCode from "qrcode";
+
+const SESSIONS_PER_PAGE = 6;
 
 export default function SessionsManagementPage() {
   const router = useRouter();
@@ -42,6 +52,7 @@ export default function SessionsManagementPage() {
   // Sessions state
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState("");
@@ -74,6 +85,12 @@ export default function SessionsManagementPage() {
   const [showDeleteSessionModal, setShowDeleteSessionModal] = useState(false);
   const [showCreateSessionModal, setShowCreateSessionModal] = useState(false);
   const [showAddActivityModal, setShowAddActivityModal] = useState(false);
+  const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
+  const [inspectingParticipantId, setInspectingParticipantId] = useState<string | null>(null);
+
+  // Add Participant Form state
+  const [newParticipantName, setNewParticipantName] = useState("");
+  const [newParticipantUsername, setNewParticipantUsername] = useState("");
 
   // Edit Session Form state
   const [editTitle, setEditTitle] = useState("");
@@ -82,12 +99,15 @@ export default function SessionsManagementPage() {
   const [editCanvaUrl, setEditCanvaUrl] = useState("");
   const [editSlideCount, setEditSlideCount] = useState<string>("10");
   const [editLeaderboardVisibility, setEditLeaderboardVisibility] = useState<"HIDDEN" | "LIVE" | "END_OF_ACTIVITY">("LIVE");
+  const [editFacilitatorId, setEditFacilitatorId] = useState("");
 
   // Create Session Form state
   const [newTitle, setNewTitle] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newFacilitatorName, setNewFacilitatorName] = useState("");
   const [newFacilitatorEmail, setNewFacilitatorEmail] = useState("");
+  const [newFacilitatorId, setNewFacilitatorId] = useState("");
+  const [allFacilitatorUsers, setAllFacilitatorUsers] = useState<any[]>([]);
 
   // Add Activity Form state
   const [newActTitle, setNewActTitle] = useState("");
@@ -101,6 +121,23 @@ export default function SessionsManagementPage() {
 
   const isAdminRole = (role?: string) =>
     role === "ADMIN" || role === "SUPER_ADMIN";
+
+  const loadFacilitatorAccounts = async (token: string) => {
+    try {
+      const res = await fetch("/api/users", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const users = await res.json();
+        setAllFacilitatorUsers(
+          users.filter(
+            (u: any) =>
+              u.role === "FACILITATOR" || u.role === "ADMIN" || u.role === "SUPER_ADMIN"
+          )
+        );
+      }
+    } catch {}
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -117,6 +154,9 @@ export default function SessionsManagementPage() {
       if (token && parsedUser && isAuthorizedRole(parsedUser.role)) {
         setUserToken(token);
         loadSessions(token);
+        if (isAdminRole(parsedUser.role)) {
+          loadFacilitatorAccounts(token);
+        }
       } else {
         setLoading(false);
         setShowLoginModal(true);
@@ -155,6 +195,9 @@ export default function SessionsManagementPage() {
       setCurrentUser(data.user);
       setShowLoginModal(false);
       loadSessions(data.token);
+      if (isAdminRole(data.user?.role)) {
+        loadFacilitatorAccounts(data.token);
+      }
     } catch (err: any) {
       setLoginError(err.message);
     } finally {
@@ -235,6 +278,7 @@ export default function SessionsManagementPage() {
     setEditCanvaUrl(session.canvaPresentationUrl || "");
     setEditSlideCount(session.canvaSlideCount ? String(session.canvaSlideCount) : "10");
     setEditLeaderboardVisibility(session.leaderboardVisibility || "LIVE");
+    setEditFacilitatorId(session.facilitatorId || session.facilitator?.id || "");
     setShowEditSessionModal(true);
   };
 
@@ -250,7 +294,7 @@ export default function SessionsManagementPage() {
         userToken ||
         (typeof window !== "undefined" ? localStorage.getItem("tgms_user_token") : null);
 
-      const payload = {
+      const payload: any = {
         title: editTitle.trim(),
         description: editDescription.trim(),
         status: editStatus,
@@ -258,6 +302,10 @@ export default function SessionsManagementPage() {
         canvaSlideCount: editSlideCount ? parseInt(editSlideCount, 10) : null,
         leaderboardVisibility: editLeaderboardVisibility,
       };
+
+      if (isAdminRole(currentUser?.role) && editFacilitatorId) {
+        payload.facilitatorId = editFacilitatorId;
+      }
 
       const res = await fetch(`/api/sessions/${selectedSession.id}`, {
         method: "PATCH",
@@ -337,6 +385,9 @@ export default function SessionsManagementPage() {
           description: newDescription.trim() || undefined,
           facilitatorName: newFacilitatorName.trim() || currentUser?.name || "Facilitator",
           facilitatorEmail: newFacilitatorEmail.trim() || currentUser?.email || "facilitator@training.local",
+          ...(isAdminRole(currentUser?.role) && newFacilitatorId
+            ? { facilitatorId: newFacilitatorId }
+            : {}),
         }),
       });
 
@@ -437,6 +488,41 @@ export default function SessionsManagementPage() {
     }
   };
 
+  const handleAddParticipantToSession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSession || (!newParticipantName.trim() && !newParticipantUsername.trim())) return;
+    setSubmitting(true);
+    setErrorMsg("");
+    try {
+      const activeToken =
+        userToken ||
+        (typeof window !== "undefined" ? localStorage.getItem("tgms_user_token") : null);
+      const res = await fetch(`/api/sessions/${selectedSession.id}/assign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
+        },
+        body: JSON.stringify({
+          displayName: newParticipantName.trim() || undefined,
+          username: newParticipantUsername.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to add participant");
+      setSuccessMsg(`Participant '${data.participant?.displayName || newParticipantName}' added to session!`);
+      setShowAddParticipantModal(false);
+      setNewParticipantName("");
+      setNewParticipantUsername("");
+      openSessionDetail(selectedSession);
+      loadSessions();
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const facilitatorsList = useMemo(() => {
     const map = new Map<string, string>();
     sessions.forEach((s) => {
@@ -465,6 +551,15 @@ export default function SessionsManagementPage() {
       return matchesSearch && matchesStatus && matchesFacilitator;
     });
   }, [sessions, searchQuery, statusFilter, facilitatorFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSessions.length / SESSIONS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedSessions = useMemo(() => {
+    return filteredSessions.slice(
+      (safePage - 1) * SESSIONS_PER_PAGE,
+      safePage * SESSIONS_PER_PAGE
+    );
+  }, [filteredSessions, safePage]);
 
   const stats = useMemo(() => {
     const total = sessions.length;
@@ -552,23 +647,17 @@ export default function SessionsManagementPage() {
 
           <div className="flex items-center gap-2">
             {currentUser ? (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-xl border border-slate-200 text-xs">
-                <Shield className="w-3.5 h-3.5 text-indigo-600" />
-                <span className="font-semibold text-slate-800">{currentUser.name}</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                    currentUser.role === "SUPER_ADMIN"
-                      ? "bg-amber-200 text-amber-900"
-                      : currentUser.role === "ADMIN"
-                      ? "bg-rose-100 text-rose-800"
-                      : "bg-purple-100 text-purple-800"
-                  }`}
-                >
-                  {currentUser.role}
-                </span>
+              <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+                <UserAvatarButton
+                  user={currentUser}
+                  onProfileUpdated={(updated) => {
+                    setCurrentUser(updated);
+                    loadSessions();
+                  }}
+                />
                 <button
                   onClick={handleLogout}
-                  className="text-slate-400 hover:text-slate-600 ml-1 font-normal underline"
+                  className="px-2.5 py-2 text-xs font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-xl transition"
                 >
                   Sign Out
                 </button>
@@ -679,7 +768,10 @@ export default function SessionsManagementPage() {
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
               placeholder="Search sessions by title, code, description, or host..."
               className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50"
             />
@@ -689,7 +781,10 @@ export default function SessionsManagementPage() {
             {/* Status Filter */}
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setCurrentPage(1);
+              }}
               className="px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="ALL">All Statuses</option>
@@ -702,7 +797,10 @@ export default function SessionsManagementPage() {
             {isAdminRole(currentUser?.role) && facilitatorsList.length > 0 && (
               <select
                 value={facilitatorFilter}
-                onChange={(e) => setFacilitatorFilter(e.target.value)}
+                onChange={(e) => {
+                  setFacilitatorFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="ALL">All Facilitators</option>
@@ -750,140 +848,194 @@ export default function SessionsManagementPage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredSessions.map((s) => {
-              const partCount = s.participantCount ?? s._count?.participants ?? 0;
-              const actCount = s.activityCount ?? s._count?.activities ?? 0;
-              const teamCount = s.teamCount ?? s._count?.teams ?? 0;
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {paginatedSessions.map((s) => {
+                const partCount = s.participantCount ?? s._count?.participants ?? 0;
+                const actCount = s.activityCount ?? s._count?.activities ?? 0;
+                const teamCount = s.teamCount ?? s._count?.teams ?? 0;
 
-              return (
-                <div
-                  key={s.id}
-                  className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between"
-                >
-                  <div className="space-y-3">
-                    {/* Header: Title & Status */}
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="space-y-0.5">
-                        <span
-                          className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border inline-block ${
-                            s.status === "ACTIVE"
-                              ? "bg-emerald-100 text-emerald-800 border-emerald-300"
-                              : s.status === "WAITING"
-                              ? "bg-amber-100 text-amber-800 border-amber-300"
-                              : "bg-slate-100 text-slate-600 border-slate-300"
-                          }`}
-                        >
-                          {s.status}
-                        </span>
-                        <h3 className="text-base font-bold text-slate-900 line-clamp-1">{s.title}</h3>
+                return (
+                  <div
+                    key={s.id}
+                    className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between"
+                  >
+                    <div className="space-y-3">
+                      {/* Header: Title & Status */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <span
+                            className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border inline-block ${
+                              s.status === "ACTIVE"
+                                ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                                : s.status === "WAITING"
+                                ? "bg-amber-100 text-amber-800 border-amber-300"
+                                : "bg-slate-100 text-slate-600 border-slate-300"
+                            }`}
+                          >
+                            {s.status}
+                          </span>
+                          <h3 className="text-base font-bold text-slate-900 line-clamp-1">{s.title}</h3>
+                        </div>
+
+                        {/* Code Badge */}
+                        <div className="flex items-center gap-1 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg">
+                          <span className="font-mono text-xs font-bold text-indigo-700">{s.code}</span>
+                          <button
+                            onClick={() => handleCopyCode(s.code)}
+                            className="text-indigo-400 hover:text-indigo-600 p-0.5"
+                            title="Copy session code"
+                          >
+                            {copiedCode ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                          </button>
+                        </div>
                       </div>
 
-                      {/* Code Badge */}
-                      <div className="flex items-center gap-1 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg">
-                        <span className="font-mono text-xs font-bold text-indigo-700">{s.code}</span>
-                        <button
-                          onClick={() => handleCopyCode(s.code)}
-                          className="text-indigo-400 hover:text-indigo-600 p-0.5"
-                          title="Copy session code"
+                      {/* Description */}
+                      <p className="text-xs text-slate-500 line-clamp-2 min-h-[32px]">
+                        {s.description || "No description provided for this session."}
+                      </p>
+
+                      {/* Facilitator info */}
+                      <div className="flex items-center gap-2 text-xs text-slate-600 pt-1 border-t border-slate-100">
+                        <Shield className="w-3.5 h-3.5 text-indigo-500" />
+                        <span className="truncate">
+                          Host: <strong className="text-slate-800">{s.facilitator?.name || s.facilitator?.username || "Facilitator"}</strong>
+                        </span>
+                      </div>
+
+                      {/* Stats badges */}
+                      <div className="grid grid-cols-3 gap-2 py-2 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Users</p>
+                          <p className="text-sm font-bold text-slate-800">{partCount}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Activities</p>
+                          <p className="text-sm font-bold text-slate-800">{actCount}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Teams</p>
+                          <p className="text-sm font-bold text-slate-800">{teamCount}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Actions Bar */}
+                    <div className="pt-4 border-t border-slate-100 space-y-2">
+                      <button
+                        onClick={() => openSessionDetail(s)}
+                        className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center justify-center gap-1.5"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        View Session Data & CRUD
+                      </button>
+
+                      <div className="flex items-center justify-between gap-1.5 pt-1">
+                        <Link
+                          href={`/sessions/${s.id}/facilitator`}
+                          className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg transition text-center flex items-center justify-center gap-1"
+                          title="Open Live Facilitator Control Room"
                         >
-                          {copiedCode ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                          <ExternalLink className="w-3 h-3" />
+                          Host Room
+                        </Link>
+
+                        <Link
+                          href={`/sessions/${s.id}/projector`}
+                          target="_blank"
+                          className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg transition text-center flex items-center justify-center gap-1"
+                          title="Open Big-Screen Projector"
+                        >
+                          <Presentation className="w-3 h-3" />
+                          Projector
+                        </Link>
+
+                        <button
+                          onClick={() => handleDownloadDataset(s.id, s.code)}
+                          className="p-1.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg text-slate-600 transition"
+                          title="Download JSON Dataset"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          onClick={() => openEditSession(s)}
+                          className="p-1.5 bg-slate-100 hover:bg-amber-50 hover:text-amber-600 rounded-lg text-slate-600 transition"
+                          title="Edit Session Settings"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setSelectedSession(s);
+                            setShowDeleteSessionModal(true);
+                          }}
+                          className="p-1.5 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-lg text-slate-600 transition"
+                          title="Delete Session"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
-
-                    {/* Description */}
-                    <p className="text-xs text-slate-500 line-clamp-2 min-h-[32px]">
-                      {s.description || "No description provided for this session."}
-                    </p>
-
-                    {/* Facilitator info */}
-                    <div className="flex items-center gap-2 text-xs text-slate-600 pt-1 border-t border-slate-100">
-                      <Shield className="w-3.5 h-3.5 text-indigo-500" />
-                      <span className="truncate">
-                        Host: <strong className="text-slate-800">{s.facilitator?.name || s.facilitator?.username || "Facilitator"}</strong>
-                      </span>
-                    </div>
-
-                    {/* Stats badges */}
-                    <div className="grid grid-cols-3 gap-2 py-2 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">Users</p>
-                        <p className="text-sm font-bold text-slate-800">{partCount}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">Activities</p>
-                        <p className="text-sm font-bold text-slate-800">{actCount}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">Teams</p>
-                        <p className="text-sm font-bold text-slate-800">{teamCount}</p>
-                      </div>
-                    </div>
                   </div>
+                );
+              })}
+            </div>
 
-                  {/* Actions Bar */}
-                  <div className="pt-4 border-t border-slate-100 space-y-2">
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-2xl border border-slate-200 shadow-sm text-xs text-slate-600">
+                <span>
+                  Showing{" "}
+                  <strong className="text-slate-900">
+                    {(safePage - 1) * SESSIONS_PER_PAGE + 1}
+                  </strong>{" "}
+                  –{" "}
+                  <strong className="text-slate-900">
+                    {Math.min(safePage * SESSIONS_PER_PAGE, filteredSessions.length)}
+                  </strong>{" "}
+                  of <strong className="text-slate-900">{filteredSessions.length}</strong> sessions
+                </span>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={safePage <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 font-semibold text-slate-700 flex items-center gap-1 transition"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    Prev
+                  </button>
+                  {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((page) => (
                     <button
-                      onClick={() => openSessionDetail(s)}
-                      className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center justify-center gap-1.5"
+                      key={page}
+                      type="button"
+                      onClick={() => setCurrentPage(page)}
+                      className={`w-7 h-7 rounded-lg font-bold transition ${
+                        page === safePage
+                          ? "bg-indigo-600 text-white shadow-sm"
+                          : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                      }`}
                     >
-                      <Eye className="w-3.5 h-3.5" />
-                      View Session Data & CRUD
+                      {page}
                     </button>
-
-                    <div className="flex items-center justify-between gap-1.5 pt-1">
-                      <Link
-                        href={`/sessions/${s.id}/facilitator`}
-                        className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg transition text-center flex items-center justify-center gap-1"
-                        title="Open Live Facilitator Control Room"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        Host Room
-                      </Link>
-
-                      <Link
-                        href={`/sessions/${s.id}/projector`}
-                        target="_blank"
-                        className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg transition text-center flex items-center justify-center gap-1"
-                        title="Open Big-Screen Projector"
-                      >
-                        <Presentation className="w-3 h-3" />
-                        Projector
-                      </Link>
-
-                      <button
-                        onClick={() => handleDownloadDataset(s.id, s.code)}
-                        className="p-1.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg text-slate-600 transition"
-                        title="Download JSON Dataset"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={() => openEditSession(s)}
-                        className="p-1.5 bg-slate-100 hover:bg-amber-50 hover:text-amber-600 rounded-lg text-slate-600 transition"
-                        title="Edit Session Settings"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setSelectedSession(s);
-                          setShowDeleteSessionModal(true);
-                        }}
-                        className="p-1.5 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 rounded-lg text-slate-600 transition"
-                        title="Delete Session"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={safePage >= totalPages}
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 font-semibold text-slate-700 flex items-center gap-1 transition"
+                  >
+                    Next
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            )}
+          </>
         )}
       </main>
 
@@ -1023,8 +1175,8 @@ export default function SessionsManagementPage() {
                           {selectedSession.canvaPresentationUrl}
                         </a>
                       </div>
-                      <span className="text-[11px] font-bold px-2 py-0.5 bg-slate-100 rounded text-slate-700">
-                        {selectedSession.canvaSlideCount || 10} slides
+                      <span className="text-[11px] font-bold px-2 py-0.5 bg-indigo-50 rounded text-indigo-700">
+                        All Slides Linked
                       </span>
                     </div>
                   )}
@@ -1055,12 +1207,12 @@ export default function SessionsManagementPage() {
                 </div>
               </div>
 
-              {/* Activities in this Session (with CRUD) */}
+              {/* Activities / Interactions in this Session (with nested Messages, Replies/Comments & Whiteboards) */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                     <Layers className="w-4 h-4 text-indigo-600" />
-                    Session Activities ({sessionDetails?.activities?.length || 0})
+                    Session Interactions & Activities ({sessionDetails?.activities?.length || 0})
                   </h3>
                   <button
                     onClick={() => setShowAddActivityModal(true)}
@@ -1072,92 +1224,245 @@ export default function SessionsManagementPage() {
                 </div>
 
                 {loadingDetails ? (
-                  <div className="text-center py-6 text-xs text-slate-400">Loading activities...</div>
+                  <div className="text-center py-6 text-xs text-slate-400">Loading interactions...</div>
                 ) : (!sessionDetails?.activities || sessionDetails.activities.length === 0) ? (
                   <div className="text-center py-6 bg-slate-50 rounded-xl border border-dashed text-xs text-slate-400">
-                    No activities created yet in this session.
+                    No interactions created yet in this session.
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {sessionDetails.activities.map((act: any) => (
-                      <div
-                        key={act.id}
-                        className="p-3 bg-white rounded-xl border border-slate-200 text-xs flex items-center justify-between gap-3 shadow-sm"
-                      >
-                        <div className="space-y-0.5 flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-800 truncate">{act.title}</span>
-                            <span className="text-[10px] font-semibold px-2 py-0.5 bg-slate-100 rounded text-slate-600">
-                              {act.type}
-                            </span>
-                            <span
-                              className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                                act.state === "ACTIVE"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-slate-100 text-slate-600"
-                              }`}
-                            >
-                              {act.state}
-                            </span>
-                          </div>
-                          <p className="text-slate-500 truncate text-[11px]">{act.prompt}</p>
-                        </div>
+                  <div className="space-y-3">
+                    {sessionDetails.activities.map((act: any) => {
+                      const actResponses = act.responses || act.messages || [];
+                      const actWhiteboards = act.whiteboards || [];
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Link
-                            href={`/activities?sessionId=${selectedSession.id}`}
-                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition"
-                            title="Inspect in Activities Database"
-                          >
-                            <FileSpreadsheet className="w-3.5 h-3.5" />
-                          </Link>
-                          <button
-                            onClick={() => handleDeleteActivityFromSession(act.id, act.title)}
-                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition"
-                            title="Delete Activity"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                      return (
+                        <div
+                          key={act.id}
+                          className="p-4 bg-white rounded-xl border border-slate-200 text-xs space-y-3 shadow-sm"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="space-y-0.5 flex-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-bold text-slate-900 truncate">{act.title}</span>
+                                <span className="text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-100">
+                                  {act.type}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                                    act.state === "ACTIVE"
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : "bg-slate-100 text-slate-600"
+                                  }`}
+                                >
+                                  {act.state}
+                                </span>
+                                <span className="text-[10px] font-semibold text-slate-500">
+                                  • {actResponses.length} messages/responses • {actWhiteboards.length} whiteboards
+                                </span>
+                              </div>
+                              <p className="text-slate-500 truncate text-[11px]">{act.prompt}</p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Link
+                                href={`/activities?sessionId=${selectedSession.id}`}
+                                className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition"
+                                title="Inspect in Activities Database"
+                              >
+                                <FileSpreadsheet className="w-3.5 h-3.5" />
+                              </Link>
+                              <button
+                                onClick={() => handleDeleteActivityFromSession(act.id, act.title)}
+                                className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition"
+                                title="Delete Activity"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Nested Messages / Responses, Replies / Comments, and Feedbacks */}
+                          {actResponses.length > 0 && (
+                            <div className="pl-3 border-l-2 border-indigo-200 space-y-2">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 flex items-center gap-1">
+                                <MessageSquare className="w-3 h-3" />
+                                <span>Messages, Replies & Comments ({actResponses.length})</span>
+                              </p>
+                              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                                {actResponses.map((r: any) => {
+                                  const comments = r.comments || r.replies || [];
+                                  const reactions = r.reactions || [];
+                                  return (
+                                    <div key={r.id} className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/80 space-y-1">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => r.participantId && setInspectingParticipantId(r.participantId)}
+                                          className="font-bold text-indigo-700 hover:underline text-left"
+                                        >
+                                          {r.participant?.displayName || "Participant"}
+                                        </button>
+                                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                                          {reactions.length > 0 && (
+                                            <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 font-bold">
+                                              👍 {reactions.length}
+                                            </span>
+                                          )}
+                                          {comments.length > 0 && (
+                                            <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 font-bold">
+                                              💬 {comments.length} replies
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <p className="text-slate-800 break-words">{r.content}</p>
+
+                                      {comments.length > 0 && (
+                                        <div className="mt-1.5 pt-1.5 border-t border-slate-200/70 pl-2.5 border-l-2 border-indigo-300 space-y-1">
+                                          {comments.map((c: any) => (
+                                            <div key={c.id} className="text-[11px] text-slate-600">
+                                              <span className="font-bold text-slate-800 mr-1">
+                                                {c.participant?.displayName || "User"}:
+                                              </span>
+                                              <span>{c.content}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Nested Whiteboards */}
+                          {actWhiteboards.length > 0 && (
+                            <div className="pl-3 border-l-2 border-purple-200 space-y-1.5">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-purple-600 flex items-center gap-1">
+                                <Palette className="w-3 h-3" />
+                                <span>Whiteboards ({actWhiteboards.length})</span>
+                              </p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {actWhiteboards.map((wb: any) => (
+                                  <div
+                                    key={wb.id}
+                                    className="p-2 bg-purple-50/50 rounded-lg border border-purple-100 flex items-center justify-between text-[11px]"
+                                  >
+                                    <span className="font-semibold text-slate-800 truncate">
+                                      {wb.team?.name
+                                        ? `Team ${wb.team.name}`
+                                        : wb.participant?.displayName || "Collaborative Canvas"}
+                                    </span>
+                                    <span className="px-1.5 py-0.5 rounded bg-white border border-purple-200 text-purple-700 text-[10px] font-bold">
+                                      {wb.isSubmitted ? "Submitted" : "Active Canvas"}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
 
-              {/* Participants Roster in this Session */}
+              {/* Participants Roster in this Session (with Related Points & Awards + Click to Inspect) */}
               <div className="space-y-3">
-                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                  <Users className="w-4 h-4 text-indigo-600" />
-                  Enrolled Participants ({sessionDetails?.participants?.length || 0})
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                    <Users className="w-4 h-4 text-indigo-600" />
+                    Enrolled Participants — Points & Awards ({sessionDetails?.participants?.length || 0})
+                  </h3>
+                  <button
+                    onClick={() => setShowAddParticipantModal(true)}
+                    className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition flex items-center gap-1"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    Add Participant
+                  </button>
+                </div>
 
                 {loadingDetails ? (
                   <div className="text-center py-6 text-xs text-slate-400">Loading participants...</div>
                 ) : (!sessionDetails?.participants || sessionDetails.participants.length === 0) ? (
                   <div className="text-center py-6 bg-slate-50 rounded-xl border border-dashed text-xs text-slate-400">
-                    No participants have joined this session yet.
+                    No participants have joined this session yet. Click &quot;Add Participant&quot; to enroll one.
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {sessionDetails.participants.map((p: any) => (
-                      <div
-                        key={p.id}
-                        className="p-3 bg-white rounded-xl border border-slate-200 text-xs flex items-center justify-between"
-                      >
-                        <div>
-                          <p className="font-bold text-slate-800">{p.displayName}</p>
-                          <p className="text-[11px] text-slate-400">
-                            Joined {new Date(p.joinedAt).toLocaleTimeString()}
-                          </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {sessionDetails.participants.map((p: any) => {
+                      const pBadges = p.badges || p.awards || [];
+                      const pPoints = p.pointsReceived || p.points || [];
+
+                      return (
+                        <div
+                          key={p.id}
+                          onClick={() => setInspectingParticipantId(p.id)}
+                          className="p-3.5 bg-white hover:bg-indigo-50/40 rounded-xl border border-slate-200 hover:border-indigo-300 text-xs space-y-2.5 cursor-pointer transition shadow-sm"
+                          title="Click to inspect full participant profile, session info, points, awards & interactions"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-bold text-slate-900 flex items-center gap-1.5">
+                                <span className="underline decoration-dotted underline-offset-2">
+                                  {p.displayName}
+                                </span>
+                                {p.team?.name && (
+                                  <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-[10px] font-semibold">
+                                    {p.team.name}
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[11px] text-slate-400">
+                                Joined {new Date(p.joinedAt).toLocaleTimeString()} • Click to inspect
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg">
+                                {p.totalPoints || 0} pts
+                              </span>
+                              <span className="font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-lg">
+                                🏅 {pBadges.length}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Related Awards / Badges */}
+                          {pBadges.length > 0 && (
+                            <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-100">
+                              {pBadges.map((b: any) => (
+                                <span
+                                  key={b.id}
+                                  className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-[10px] font-bold"
+                                >
+                                  {b.badge?.icon || "🏅"} {b.badge?.name || b.name || "Award"}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Related Points History Preview */}
+                          {pPoints.length > 0 && (
+                            <div className="pt-1 border-t border-slate-100 space-y-1">
+                              <p className="text-[10px] font-bold uppercase text-slate-400">
+                                Recent Points ({pPoints.length} awards):
+                              </p>
+                              {pPoints.slice(0, 2).map((pt: any) => (
+                                <div key={pt.id} className="flex items-center justify-between text-[11px] text-slate-600">
+                                  <span className="truncate">{pt.reason || pt.source}</span>
+                                  <span className="font-mono font-bold text-amber-600 shrink-0 ml-2">
+                                    +{pt.amount} pts
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">
-                            {p.totalPoints || 0} pts
-                          </span>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1177,6 +1482,81 @@ export default function SessionsManagementPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ADD PARTICIPANT TO SESSION MODAL */}
+      {showAddParticipantModal && selectedSession && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-emerald-600" />
+                Add Participant to {selectedSession.title}
+              </h3>
+              <button
+                onClick={() => setShowAddParticipantModal(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddParticipantToSession} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Participant Display Name *
+                </label>
+                <input
+                  type="text"
+                  required={!newParticipantUsername.trim()}
+                  value={newParticipantName}
+                  onChange={(e) => setNewParticipantName(e.target.value)}
+                  placeholder="e.g. Jordan Lee"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Existing Username (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={newParticipantUsername}
+                  onChange={(e) => setNewParticipantUsername(e.target.value)}
+                  placeholder="e.g. alice_lead"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddParticipantModal(false)}
+                  className="px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-sm transition flex items-center gap-1.5"
+                >
+                  {submitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  Add Participant
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* PARTICIPANT INSPECTOR MODAL */}
+      {inspectingParticipantId && (
+        <ParticipantDetailModal
+          participantId={inspectingParticipantId}
+          onClose={() => setInspectingParticipantId(null)}
+        />
       )}
 
       {/* EDIT SESSION MODAL */}
@@ -1254,16 +1634,37 @@ export default function SessionsManagementPage() {
                 />
               </div>
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Canva Slide Count</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={editSlideCount}
-                  onChange={(e) => setEditSlideCount(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300"
-                />
-              </div>
+              {isAdminRole(currentUser?.role) ? (
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Assigned Facilitator (Admin Only)
+                  </label>
+                  <select
+                    value={editFacilitatorId}
+                    onChange={(e) => setEditFacilitatorId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white font-medium"
+                  >
+                    {allFacilitatorUsers.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name} (@{f.username}) — {f.role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-slate-600">
+                  <span>
+                    Assigned Facilitator:{" "}
+                    <strong className="text-slate-800">
+                      {selectedSession.facilitator?.name || currentUser?.name}
+                    </strong>
+                  </span>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 bg-slate-200 text-slate-700 rounded flex items-center gap-1">
+                    <Lock className="w-3 h-3" />
+                    Admin Only
+                  </span>
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
@@ -1366,29 +1767,47 @@ export default function SessionsManagementPage() {
                 />
               </div>
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Facilitator Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={newFacilitatorName}
-                  onChange={(e) => setNewFacilitatorName(e.target.value)}
-                  placeholder="e.g. Maya Lin"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Facilitator Email *</label>
-                <input
-                  type="email"
-                  required
-                  value={newFacilitatorEmail}
-                  onChange={(e) => setNewFacilitatorEmail(e.target.value)}
-                  placeholder="e.g. maya@training.local"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300"
-                />
-              </div>
+              {isAdminRole(currentUser?.role) ? (
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Assign to Facilitator (Admin Only)
+                  </label>
+                  <select
+                    value={newFacilitatorId || currentUser?.id || ""}
+                    onChange={(e) => {
+                      const fId = e.target.value;
+                      setNewFacilitatorId(fId);
+                      const found = allFacilitatorUsers.find((u) => u.id === fId);
+                      if (found) {
+                        setNewFacilitatorName(found.name || found.username);
+                        setNewFacilitatorEmail(found.email || `${found.username}@training.local`);
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white font-medium"
+                  >
+                    {allFacilitatorUsers.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name} (@{f.username}) — {f.role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-slate-600">
+                  <div>
+                    <span className="font-semibold text-slate-800 block">
+                      Assigned Facilitator: {currentUser?.name}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {currentUser?.email || `${currentUser?.username}@training.local`}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 bg-slate-200 text-slate-700 rounded flex items-center gap-1">
+                    <Lock className="w-3 h-3" />
+                    Locked to You
+                  </span>
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button

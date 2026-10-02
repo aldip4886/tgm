@@ -8,11 +8,37 @@ export async function exportSessionData(sessionId: string) {
       facilitator: true,
       participants: {
         include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              name: true,
+              email: true,
+              role: true,
+            },
+          },
           team: true,
           badges: {
             include: {
               badge: true,
             },
+            orderBy: { createdAt: "asc" },
+          },
+          pointsReceived: {
+            include: {
+              giver: {
+                select: { id: true, displayName: true },
+              },
+            },
+            orderBy: { createdAt: "asc" },
+          },
+          pointsGiven: {
+            include: {
+              participant: {
+                select: { id: true, displayName: true },
+              },
+            },
+            orderBy: { createdAt: "asc" },
           },
         },
       },
@@ -26,12 +52,44 @@ export async function exportSessionData(sessionId: string) {
         include: {
           responses: {
             include: {
-              comments: true,
-              reactions: true,
+              participant: {
+                select: { id: true, displayName: true, role: true },
+              },
+              team: {
+                select: { id: true, name: true },
+              },
+              comments: {
+                include: {
+                  participant: {
+                    select: { id: true, displayName: true, role: true },
+                  },
+                },
+                orderBy: { createdAt: "asc" },
+              },
+              reactions: {
+                include: {
+                  participant: {
+                    select: { id: true, displayName: true },
+                  },
+                },
+              },
+              points: true,
             },
+            orderBy: { createdAt: "asc" },
           },
-          whiteboards: true,
+          whiteboards: {
+            include: {
+              participant: {
+                select: { id: true, displayName: true },
+              },
+              team: {
+                select: { id: true, name: true },
+              },
+            },
+            orderBy: { createdAt: "asc" },
+          },
         },
+        orderBy: { orderIndex: "asc" },
       },
       points: {
         orderBy: { createdAt: "asc" },
@@ -135,6 +193,64 @@ export async function exportSessionData(sessionId: string) {
     timerRemainingMs: a.timerRemainingMs,
   }));
 
+  // Structured Interactions (messages, replies, comments, feedbacks, whiteboards grouped per interaction)
+  const interactions = session.activities.map((a) => ({
+    id: a.id,
+    title: a.title,
+    prompt: a.prompt,
+    type: a.type,
+    state: a.state,
+    revealMode: a.revealMode,
+    createdAt: a.createdAt,
+    updatedAt: a.updatedAt,
+    messages: a.responses.map((r) => ({
+      id: r.id,
+      participantId: r.participantId,
+      participantName: r.participant?.displayName || null,
+      teamId: r.teamId,
+      teamName: r.team?.name || null,
+      content: r.content,
+      color: r.color,
+      isHidden: r.isHidden,
+      createdAt: r.createdAt,
+      replies: r.comments.map((c) => ({
+        id: c.id,
+        participantId: c.participantId,
+        participantName: c.participant?.displayName || null,
+        content: c.content,
+        parentId: c.parentId,
+        createdAt: c.createdAt,
+      })),
+      comments: r.comments.map((c) => ({
+        id: c.id,
+        participantId: c.participantId,
+        participantName: c.participant?.displayName || null,
+        content: c.content,
+        parentId: c.parentId,
+        createdAt: c.createdAt,
+      })),
+      reactions: r.reactions.map((rx) => ({
+        id: rx.id,
+        participantId: rx.participantId,
+        participantName: rx.participant?.displayName || null,
+        type: rx.type,
+        createdAt: rx.createdAt,
+      })),
+    })),
+    whiteboards: a.whiteboards.map((w) => ({
+      id: w.id,
+      participantId: w.participantId,
+      participantName: w.participant?.displayName || null,
+      teamId: w.teamId,
+      teamName: w.team?.name || null,
+      sceneData: w.sceneData,
+      isSubmitted: w.isSubmitted,
+      submittedAt: w.submittedAt,
+      createdAt: w.createdAt,
+      updatedAt: w.updatedAt,
+    })),
+  }));
+
   return {
     schema_version: "1.0",
     session: {
@@ -165,6 +281,38 @@ export async function exportSessionData(sessionId: string) {
       peerPointBudget: p.peerPointBudget,
       teamId: p.teamId,
       teamName: p.team?.name || null,
+      user: p.user || null,
+      points: (p.pointsReceived || []).map((pt) => ({
+        id: pt.id,
+        amount: pt.amount,
+        category: pt.category,
+        reason: pt.reason,
+        giverId: pt.giverId,
+        giverName: pt.giver?.displayName || "Facilitator / System",
+        activityId: pt.activityId,
+        responseId: pt.responseId,
+        createdAt: pt.createdAt,
+      })),
+      pointsGiven: (p.pointsGiven || []).map((pt) => ({
+        id: pt.id,
+        amount: pt.amount,
+        category: pt.category,
+        reason: pt.reason,
+        recipientId: pt.participantId,
+        recipientName: pt.participant?.displayName || null,
+        createdAt: pt.createdAt,
+      })),
+      awards: (p.badges || []).map((b) => ({
+        id: b.id,
+        badgeId: b.badgeId,
+        name: b.badge.name,
+        description: b.badge.description,
+        icon: b.badge.icon,
+        ruleType: b.badge.ruleType,
+        reason: b.reason,
+        awardedBy: b.awardedBy,
+        awardedAt: b.createdAt,
+      })),
     })),
     teams: session.teams.map((t) => ({
       id: t.id,
@@ -179,16 +327,10 @@ export async function exportSessionData(sessionId: string) {
     })),
     presentations,
     presentation_activity_mappings: presentationMappings,
-    activities: session.activities.map((a) => ({
-      id: a.id,
-      title: a.title,
-      prompt: a.prompt,
-      type: a.type,
-      state: a.state,
-      revealMode: a.revealMode,
-      responseCount: a.responses.length,
-      createdAt: a.createdAt,
-      updatedAt: a.updatedAt,
+    interactions,
+    activities: interactions.map((i) => ({
+      ...i,
+      responseCount: i.messages.length,
     })),
     cases,
     questions,

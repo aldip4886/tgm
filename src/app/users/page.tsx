@@ -16,7 +16,12 @@ import {
   FileSpreadsheet,
   Presentation,
   Link as LinkIcon,
+  Edit3,
+  Lock,
+  Eye,
 } from "lucide-react";
+import ParticipantDetailModal from "@/components/ParticipantDetailModal";
+import { UserAvatarButton } from "@/components/UserAvatarButton";
 
 export default function UserManagementPage() {
   const [users, setUsers] = useState<any[]>([]);
@@ -37,16 +42,25 @@ export default function UserManagementPage() {
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<any>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [selectedUserForAssign, setSelectedUserForAssign] = useState<any>(null);
+  const [inspectingUserId, setInspectingUserId] = useState<string | null>(null);
 
-  // Form states
+  // Create Form states
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState("PARTICIPANT");
+
+  // Edit Form states
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editRole, setEditRole] = useState("PARTICIPANT");
+  const [editPassword, setEditPassword] = useState("");
 
   // Bulk upload state
   const [csvContent, setCsvContent] = useState("");
@@ -59,6 +73,9 @@ export default function UserManagementPage() {
 
   const isAuthorizedRole = (role?: string) =>
     role === "FACILITATOR" || role === "ADMIN" || role === "SUPER_ADMIN";
+
+  const isAdminRole = (role?: string) =>
+    role === "ADMIN" || role === "SUPER_ADMIN";
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -147,7 +164,9 @@ export default function UserManagementPage() {
         fetch("/api/users", {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch("/api/sessions"),
+        fetch("/api/sessions", {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
       ]);
 
       if (uRes.status === 401 || uRes.status === 403) {
@@ -198,6 +217,49 @@ export default function UserManagementPage() {
       setNewPassword("");
       setNewName("");
       setNewEmail("");
+      loadData();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const openEditUser = (user: any) => {
+    setSelectedUserForEdit(user);
+    setEditName(user.name || "");
+    setEditEmail(user.email || "");
+    setEditRole(user.role || "PARTICIPANT");
+    setEditPassword("");
+    setShowEditModal(true);
+  };
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUserForEdit) return;
+    setError("");
+    setSuccessMsg("");
+
+    try {
+      const token = userToken || (typeof window !== "undefined" ? localStorage.getItem("tgms_user_token") : null);
+      const res = await fetch(`/api/users/${selectedUserForEdit.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          name: editName.trim(),
+          email: editEmail.trim() || "",
+          role: editRole,
+          ...(editPassword ? { password: editPassword } : {}),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update user");
+
+      setSuccessMsg(`User '${data.username || data.name}' updated successfully!`);
+      setShowEditModal(false);
+      setSelectedUserForEdit(null);
       loadData();
     } catch (err: any) {
       setError(err.message);
@@ -307,6 +369,7 @@ bob_builder,secure99,Bob Miller,PARTICIPANT,bob@company.com
 carol_eng,tech2026,Carol Davis,PARTICIPANT,carol@company.com`;
 
   const isAuthorized = Boolean(userToken && currentUser && isAuthorizedRole(currentUser.role));
+  const canManageUsers = Boolean(userToken && currentUser && isAdminRole(currentUser.role));
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-16">
@@ -327,7 +390,9 @@ carol_eng,tech2026,Carol Davis,PARTICIPANT,carol@company.com`;
               <div>
                 <h1 className="text-lg font-bold text-slate-900">User Management</h1>
                 <p className="text-xs text-slate-500">
-                  Manage participant accounts, passwords, CSV rosters, and session assignments
+                  {canManageUsers
+                    ? "Manage user accounts, roles, passwords, CSV rosters, and session assignments"
+                    : "View user roster and assign participants to your training sessions (Read-Only for Facilitators)"}
                 </p>
               </div>
             </div>
@@ -364,39 +429,7 @@ carol_eng,tech2026,Carol Davis,PARTICIPANT,carol@company.com`;
           </div>
 
           <div className="flex items-center gap-2">
-            {currentUser ? (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-xl border border-slate-200 text-xs">
-                <Shield className="w-3.5 h-3.5 text-indigo-600" />
-                <span className="font-semibold text-slate-800">{currentUser.name}</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                    currentUser.role === "SUPER_ADMIN"
-                      ? "bg-amber-200 text-amber-900"
-                      : currentUser.role === "ADMIN"
-                      ? "bg-rose-100 text-rose-800"
-                      : "bg-purple-100 text-purple-800"
-                  }`}
-                >
-                  {currentUser.role}
-                </span>
-                <button
-                  onClick={handleLogout}
-                  className="text-slate-400 hover:text-slate-600 ml-1 font-normal underline"
-                >
-                  Sign Out
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowLoginModal(true)}
-                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition"
-              >
-                <KeyRound className="w-3.5 h-3.5" />
-                Sign In (Facilitator / Admin)
-              </button>
-            )}
-
-            {isAuthorized && (
+            {canManageUsers && (
               <>
                 <button
                   onClick={() => {
@@ -417,12 +450,50 @@ carol_eng,tech2026,Carol Davis,PARTICIPANT,carol@company.com`;
                 </button>
               </>
             )}
+
+            {currentUser ? (
+              <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+                <UserAvatarButton
+                  user={currentUser}
+                  onProfileUpdated={(updated) => {
+                    setCurrentUser(updated);
+                    loadData();
+                  }}
+                />
+                <button
+                  onClick={handleLogout}
+                  className="px-2.5 py-2 text-xs font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-xl transition"
+                >
+                  Sign Out
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowLoginModal(true)}
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                Sign In (Facilitator / Admin)
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 pt-6">
+        {/* Facilitator Read-Only Notice */}
+        {isAuthorized && !canManageUsers && (
+          <div className="mb-4 p-3.5 bg-blue-50 border border-blue-200 text-blue-900 rounded-2xl text-xs flex items-center justify-between gap-3 shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <Lock className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>
+                <strong>Facilitator Read-Only Mode:</strong> Only Administrators (<code className="font-bold">ADMIN</code> / <code className="font-bold">SUPER_ADMIN</code>) can create, modify, or delete user accounts, or assign sessions to other facilitators. You can assign participants to your own sessions.
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Alerts */}
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-2">
@@ -533,75 +604,146 @@ carol_eng,tech2026,Carol Davis,PARTICIPANT,carol@company.com`;
                     ) : filteredUsers.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="py-12 text-center text-slate-400">
-                          No users found. Click "Add User" or "Upload CSV Roster" to get started.
+                          No users found.
                         </td>
                       </tr>
                     ) : (
-                      filteredUsers.map((user) => (
-                        <tr key={user.id} className="hover:bg-slate-50/80 transition">
-                          <td className="py-3 px-4 font-semibold text-slate-900">
-                            {user.name}
-                          </td>
-                          <td className="py-3 px-4 font-mono text-indigo-600 font-medium">
-                            @{user.username || "—"}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                user.role === "SUPER_ADMIN"
-                                  ? "bg-amber-100 text-amber-900 border border-amber-300"
-                                  : user.role === "FACILITATOR"
-                                  ? "bg-purple-100 text-purple-800"
-                                  : user.role === "ADMIN"
-                                  ? "bg-rose-100 text-rose-800"
-                                  : "bg-blue-100 text-blue-800"
-                              }`}
-                            >
-                              {user.role === "SUPER_ADMIN" ? "👑 SUPER ADMIN" : user.role}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-slate-500">
-                            {user.email || "—"}
-                          </td>
-                          <td className="py-3 px-4 text-slate-600">
-                            {user._count?.participants || 0} active
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
+                      filteredUsers.map((user) => {
+                        const isOtherFacilitatorOrAdmin =
+                          (user.role === "FACILITATOR" ||
+                            user.role === "ADMIN" ||
+                            user.role === "SUPER_ADMIN") &&
+                          user.id !== currentUser?.id;
+                        const canAssignThisUser =
+                          canManageUsers || !isOtherFacilitatorOrAdmin;
+
+                        return (
+                          <tr key={user.id} className="hover:bg-slate-50/80 transition">
+                            <td className="py-3 px-4 font-semibold text-slate-900">
                               <button
-                                onClick={() => {
-                                  setSelectedUserForAssign(user);
-                                  if (sessions.length > 0 && !targetSessionId) {
-                                    setTargetSessionId(sessions[0].id);
-                                  }
-                                  setShowAssignModal(true);
-                                }}
-                                className="px-2.5 py-1 text-[11px] font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition flex items-center gap-1"
-                                title="Assign to a training session"
+                                onClick={() => setInspectingUserId(user.id)}
+                                className="hover:text-indigo-600 hover:underline text-left flex items-center gap-1.5"
+                                title="Click to view user profile, created/hosted sessions, points & awards"
                               >
-                                <LinkIcon className="w-3 h-3" />
-                                Assign Session
+                                {user.name}
                               </button>
-                              {user.role === "SUPER_ADMIN" && currentUser?.role !== "SUPER_ADMIN" ? (
-                                <span
-                                  className="p-1.5 text-slate-300 cursor-not-allowed"
-                                  title="Only Super Admins can delete a Super Admin"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5 opacity-40" />
+                            </td>
+                            <td className="py-3 px-4 font-mono text-indigo-600 font-medium">
+                              @{user.username || "—"}
+                            </td>
+                            <td className="py-3 px-4">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                  user.role === "SUPER_ADMIN"
+                                    ? "bg-amber-100 text-amber-900 border border-amber-300"
+                                    : user.role === "FACILITATOR"
+                                    ? "bg-purple-100 text-purple-800"
+                                    : user.role === "ADMIN"
+                                    ? "bg-rose-100 text-rose-800"
+                                    : "bg-blue-100 text-blue-800"
+                                }`}
+                              >
+                                {user.role === "SUPER_ADMIN" ? "👑 SUPER ADMIN" : user.role}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-slate-500">
+                              {user.email || "—"}
+                            </td>
+                            <td className="py-3 px-4 text-slate-600">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {(user.role === "FACILITATOR" ||
+                                  user.role === "ADMIN" ||
+                                  user.role === "SUPER_ADMIN") && (
+                                  <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-800 border border-purple-200 font-semibold text-[11px]">
+                                    {user._count?.sessions || 0} hosted
+                                  </span>
+                                )}
+                                <span className="text-slate-500">
+                                  {user._count?.participants || 0} joined
                                 </span>
-                              ) : (
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
                                 <button
-                                  onClick={() => handleDeleteUser(user.id, user.username || user.name)}
-                                  className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
-                                  title="Delete user"
+                                  onClick={() => setInspectingUserId(user.id)}
+                                  className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition flex items-center gap-1"
+                                  title="View User Profile, Hosted Sessions, Points & Awards"
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <Eye className="w-3 h-3" />
+                                  View Profile
                                 </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+                                {canAssignThisUser ? (
+                                  <button
+                                    onClick={() => {
+                                      setSelectedUserForAssign(user);
+                                      if (sessions.length > 0 && !targetSessionId) {
+                                        setTargetSessionId(sessions[0].id);
+                                      }
+                                      setShowAssignModal(true);
+                                    }}
+                                    className="px-2.5 py-1 text-[11px] font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition flex items-center gap-1"
+                                    title="Assign to a training session"
+                                  >
+                                    <LinkIcon className="w-3 h-3" />
+                                    Assign Session
+                                  </button>
+                                ) : (
+                                  <span
+                                    className="px-2.5 py-1 text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-lg cursor-not-allowed flex items-center gap-1"
+                                    title="Only Admin and Super Admin can assign sessions to other facilitators"
+                                  >
+                                    <Lock className="w-3 h-3" />
+                                    Admin Only
+                                  </span>
+                                )}
+
+                                {canManageUsers && (
+                                  <>
+                                    {user.role === "SUPER_ADMIN" &&
+                                    currentUser?.role !== "SUPER_ADMIN" ? (
+                                      <span
+                                        className="p-1.5 text-slate-300 cursor-not-allowed"
+                                        title="Only Super Admins can edit or delete a Super Admin"
+                                      >
+                                        <Edit3 className="w-3.5 h-3.5 opacity-40" />
+                                      </span>
+                                    ) : (
+                                      <button
+                                        onClick={() => openEditUser(user)}
+                                        className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
+                                        title="Edit user (Admin / Super Admin only)"
+                                      >
+                                        <Edit3 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+
+                                    {user.role === "SUPER_ADMIN" &&
+                                    currentUser?.role !== "SUPER_ADMIN" ? (
+                                      <span
+                                        className="p-1.5 text-slate-300 cursor-not-allowed"
+                                        title="Only Super Admins can delete a Super Admin"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5 opacity-40" />
+                                      </span>
+                                    ) : (
+                                      <button
+                                        onClick={() =>
+                                          handleDeleteUser(user.id, user.username || user.name)
+                                        }
+                                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                                        title="Delete user (Admin / Super Admin only)"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -611,8 +753,8 @@ carol_eng,tech2026,Carol Davis,PARTICIPANT,carol@company.com`;
         )}
       </main>
 
-      {/* Add Single User Modal */}
-      {showAddModal && (
+      {/* Add Single User Modal (Admin / Super Admin only) */}
+      {showAddModal && canManageUsers && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between mb-4">
@@ -718,8 +860,97 @@ carol_eng,tech2026,Carol Davis,PARTICIPANT,carol@company.com`;
         </div>
       )}
 
-      {/* Bulk Upload CSV Modal */}
-      {showUploadModal && (
+      {/* Edit User Modal (Admin / Super Admin only) */}
+      {showEditModal && selectedUserForEdit && canManageUsers && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-amber-600" />
+                Edit User: @{selectedUserForEdit.username || selectedUserForEdit.name}
+              </h3>
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-semibold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateUser} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Full Name:</label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Email (Optional):</label>
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Role:</label>
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                >
+                  <option value="PARTICIPANT">Participant</option>
+                  <option value="FACILITATOR">Facilitator</option>
+                  <option value="ADMIN">Admin</option>
+                  {currentUser?.role === "SUPER_ADMIN" && (
+                    <option value="SUPER_ADMIN">👑 Super Admin</option>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  New Password <span className="text-slate-400 font-normal">(Leave blank to keep current)</span>:
+                </label>
+                <input
+                  type="password"
+                  minLength={4}
+                  placeholder="Min 4 characters"
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition shadow-sm"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Upload CSV Modal (Admin / Super Admin only) */}
+      {showUploadModal && canManageUsers && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between mb-4">
@@ -923,6 +1154,13 @@ carol_eng,tech2026,Carol Davis,PARTICIPANT,carol@company.com`;
           </div>
         </div>
       )}
+
+      {/* User / Participant Inspector Modal */}
+      <ParticipantDetailModal
+        userId={inspectingUserId}
+        onClose={() => setInspectingUserId(null)}
+      />
     </div>
   );
 }
+

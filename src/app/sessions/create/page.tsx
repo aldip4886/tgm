@@ -15,6 +15,8 @@ export default function CreateSessionPage() {
   const [description, setDescription] = useState("");
   const [facilitatorName, setFacilitatorName] = useState("");
   const [facilitatorEmail, setFacilitatorEmail] = useState("");
+  const [selectedFacilitatorId, setSelectedFacilitatorId] = useState("");
+  const [availableFacilitators, setAvailableFacilitators] = useState<any[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -24,6 +26,26 @@ export default function CreateSessionPage() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+
+  const isAdminRole = (role?: string) =>
+    role === "ADMIN" || role === "SUPER_ADMIN";
+
+  const loadFacilitatorUsers = async (token: string) => {
+    try {
+      const res = await fetch("/api/users", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const allUsers = await res.json();
+        setAvailableFacilitators(
+          allUsers.filter(
+            (u: any) =>
+              u.role === "FACILITATOR" || u.role === "ADMIN" || u.role === "SUPER_ADMIN"
+          )
+        );
+      }
+    } catch {}
+  };
 
   useEffect(() => {
     const token = localStorage.getItem("tgms_user_token");
@@ -39,8 +61,12 @@ export default function CreateSessionPage() {
         ) {
           setCurrentUser(parsed);
           setUserToken(token);
+          setSelectedFacilitatorId(parsed.id || "");
           setFacilitatorName(parsed.name || "");
           setFacilitatorEmail(parsed.email || `${parsed.username}@training.local`);
+          if (isAdminRole(parsed.role)) {
+            loadFacilitatorUsers(token);
+          }
           return;
         }
       } catch (e) {
@@ -83,8 +109,12 @@ export default function CreateSessionPage() {
 
       setCurrentUser(data.user);
       setUserToken(data.userToken);
+      setSelectedFacilitatorId(data.user.id || "");
       setFacilitatorName(data.user.name || "");
       setFacilitatorEmail(data.user.email || `${data.user.username}@training.local`);
+      if (isAdminRole(data.user.role)) {
+        loadFacilitatorUsers(data.userToken);
+      }
       setShowLoginModal(false);
     } catch (err: any) {
       setLoginError(err.message);
@@ -120,6 +150,9 @@ export default function CreateSessionPage() {
           description: description.trim() || undefined,
           facilitatorName: facilitatorName.trim(),
           facilitatorEmail: facilitatorEmail.trim(),
+          ...(isAdminRole(currentUser?.role) && selectedFacilitatorId
+            ? { facilitatorId: selectedFacilitatorId }
+            : {}),
         }),
       });
 
@@ -164,7 +197,7 @@ export default function CreateSessionPage() {
                 <ShieldCheck className="w-5 h-5 text-indigo-600" />
                 <div>
                   <span className="text-xs font-bold text-slate-800">
-                    Host: {currentUser.name}
+                    Signed In: {currentUser.name}
                   </span>
                   <span className="text-[11px] text-slate-500 block">
                     @{currentUser.username} • {currentUser.role}
@@ -215,35 +248,47 @@ export default function CreateSessionPage() {
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {isAdminRole(currentUser?.role) ? (
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
-                  Facilitator Name *
+                  Assign to Facilitator (Admin Only)
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={facilitatorName}
-                  onChange={(e) => setFacilitatorName(e.target.value)}
-                  placeholder="Your full name"
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                <select
+                  value={selectedFacilitatorId}
+                  onChange={(e) => {
+                    const fId = e.target.value;
+                    setSelectedFacilitatorId(fId);
+                    const found = availableFacilitators.find((u) => u.id === fId);
+                    if (found) {
+                      setFacilitatorName(found.name || found.username);
+                      setFacilitatorEmail(found.email || `${found.username}@training.local`);
+                    }
+                  }}
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {availableFacilitators.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name} (@{f.username}) — {f.role}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  As an Administrator, you can assign this session to any facilitator.
+                </p>
               </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
-                  Email Address *
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={facilitatorEmail}
-                  onChange={(e) => setFacilitatorEmail(e.target.value)}
-                  placeholder="trainer@company.com"
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+            ) : (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 flex items-center justify-between">
+                <div>
+                  <span className="font-semibold text-slate-800 block">
+                    Assigned Facilitator: {facilitatorName}
+                  </span>
+                  <span className="text-[11px] text-slate-500">{facilitatorEmail}</span>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 bg-slate-200 text-slate-700 rounded">
+                  Locked to your account
+                </span>
               </div>
-            </div>
+            )}
 
             <button
               type="submit"

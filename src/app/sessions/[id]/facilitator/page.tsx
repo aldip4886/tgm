@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { getSocket } from "@/lib/socket-client";
 import { DigitalTimer } from "@/components/DigitalTimer";
+import { PresentationViewer } from "@/components/PresentationViewer";
+import { ParticipantDetailModal } from "@/components/ParticipantDetailModal";
+import { UserAvatarButton } from "@/components/UserAvatarButton";
+import { SentConfirmationEffect, SentConfirmationEvent } from "@/components/SentConfirmationEffect";
 import {
   Users,
   QrCode,
@@ -35,6 +39,10 @@ import {
   MessageCircle,
   FileSpreadsheet,
   Trash2,
+  Upload,
+  MousePointerClick,
+  Send,
+  Timer,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { LeaderboardView } from "@/components/LeaderboardView";
@@ -45,6 +53,7 @@ import { RankingView } from "@/components/interactions/RankingView";
 
 export default function FacilitatorDashboard() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [session, setSession] = useState<any>(null);
   const [participants, setParticipants] = useState<any[]>([]);
   const [showQr, setShowQr] = useState(false);
@@ -55,15 +64,45 @@ export default function FacilitatorDashboard() {
   const [facilitatorCommentText, setFacilitatorCommentText] = useState("");
   const [facilitatorLikeForId, setFacilitatorLikeForId] = useState<string | null>(null);
   const [facilitatorLikeReason, setFacilitatorLikeReason] = useState("");
+  const [sentConfirmation, setSentConfirmation] = useState<SentConfirmationEvent | null>(null);
+
+  // Participant Detail Inspector & Add Participant State
+  const [inspectedParticipantId, setInspectedParticipantId] = useState<string | null>(null);
+  const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
+  const [availableUsers, setAvailableUsers] = useState<any[]>([]);
+  const [selectedUserIdToAdd, setSelectedUserIdToAdd] = useState<string>("");
+  const [newParticipantName, setNewParticipantName] = useState<string>("");
+  const [addingParticipant, setAddingParticipant] = useState(false);
 
   // Presentation State
   const [currentSlide, setCurrentSlide] = useState(1);
   const [canvaUrl, setCanvaUrl] = useState("");
   const [slideCount, setSlideCount] = useState(10);
   const [showLinkModal, setShowLinkModal] = useState(false);
+  const [linkModalTab, setLinkModalTab] = useState<"link" | "upload">("link");
+  const [uploadFiles, setUploadFiles] = useState<FileList | null>(null);
+  const [uploadingPresentation, setUploadingPresentation] = useState(false);
+  const [isProjectingCanva, setIsProjectingCanva] = useState(false);
+  const [presentationChatEnabled, setPresentationChatEnabled] = useState(true);
+  const [showFacilitatorChatPanel, setShowFacilitatorChatPanel] = useState(true);
+  const [allowInteractiveNavigation, setAllowInteractiveNavigation] = useState(false);
+  const [presentationChatMessages, setPresentationChatMessages] = useState<any[]>([]);
+  const [presentationChatInput, setPresentationChatInput] = useState("");
+  const [sendingPresentationChat, setSendingPresentationChat] = useState(false);
   const [mappings, setMappings] = useState<any[]>([]);
   const [newMappingTitle, setNewMappingTitle] = useState("");
   const [newMappingSlide, setNewMappingSlide] = useState(1);
+
+  // Session-Wide / Projection Synchronous Countdown Timer State
+  const [sessionTimer, setSessionTimer] = useState<{
+    timerStatus: "RUNNING" | "PAUSED" | "STOPPED" | "COMPLETED";
+    timerEndsAt: string | null;
+    timerRemainingMs: number | null;
+  }>({
+    timerStatus: "STOPPED",
+    timerEndsAt: null,
+    timerRemainingMs: null,
+  });
 
   // Activity State
   const [activities, setActivities] = useState<any[]>([]);
@@ -210,6 +249,18 @@ export default function FacilitatorDashboard() {
     setShowLoginModal(true);
   };
 
+  const loadPresentationChat = async () => {
+    try {
+      const res = await fetch(`/api/sessions/${id}/presentation/chat`);
+      if (res.ok) {
+        const data = await res.json();
+        setPresentationChatMessages(data.messages || []);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     async function fetchSessionData() {
       try {
@@ -238,8 +289,11 @@ export default function FacilitatorDashboard() {
 
         if (resActivities.ok) {
           const actData = await resActivities.json();
-          setActivities(actData);
-          const current = actData.find((a: any) => a.state === "ACTIVE" || a.state === "LOCKED");
+          const regularActivities = actData.filter((a: any) => a.type !== "PRESENTATION_CHAT");
+          setActivities(regularActivities);
+          const current = regularActivities.find(
+            (a: any) => a.state === "ACTIVE" || a.state === "LOCKED"
+          );
           if (current) {
             setActiveActivity(current);
             if (current.type?.startsWith("WHITEBOARD")) {
@@ -259,6 +313,8 @@ export default function FacilitatorDashboard() {
           const lbData = await resLb.json();
           setLeaderboardData({ participants: lbData.participants, teams: lbData.teams });
         }
+
+        loadPresentationChat();
       } catch (err) {
         console.error(err);
       } finally {
@@ -308,6 +364,70 @@ export default function FacilitatorDashboard() {
       });
     });
 
+    socket.on(
+      "presentation:projected",
+      (data: {
+        isProjected: boolean;
+        canvaPresentationUrl: string;
+        chatEnabled?: boolean;
+        allowInteractiveNavigation?: boolean;
+        currentSlide?: number;
+      }) => {
+        setIsProjectingCanva(Boolean(data.isProjected));
+        if (typeof data.chatEnabled === "boolean") setPresentationChatEnabled(data.chatEnabled);
+        if (typeof data.allowInteractiveNavigation === "boolean") {
+          setAllowInteractiveNavigation(data.allowInteractiveNavigation);
+        }
+        if (typeof data.currentSlide === "number") setCurrentSlide(data.currentSlide);
+      }
+    );
+
+    socket.on("presentation:chat_updated", (data?: { message?: any }) => {
+      if (data?.message) {
+        setPresentationChatMessages((prev) => {
+          if (prev.some((m) => m.id === data.message.id)) return prev;
+          // Trigger incoming notification if sent by a participant
+          if (data.message.participantId) {
+            const senderName = data.message.participant?.displayName || "Participant";
+            setSentConfirmation({
+              type: "MESSAGE_RECEIVED",
+              title: `New Live Chat from ${senderName}`,
+              detail: data.message.content,
+              recipientName: senderName,
+            });
+          }
+          return [...prev, data.message];
+        });
+      }
+      loadPresentationChat();
+    });
+
+    socket.on("like:added", () => {
+      loadPresentationChat();
+      if (activeActivity?.id) loadResponses(activeActivity.id);
+    });
+
+    socket.on("comment:added", () => {
+      loadPresentationChat();
+      if (activeActivity?.id) loadResponses(activeActivity.id);
+    });
+
+    socket.on(
+      "timer:updated",
+      (data: {
+        activityId?: string;
+        timerStatus: "RUNNING" | "PAUSED" | "STOPPED" | "COMPLETED";
+        timerEndsAt?: string;
+        timerRemainingMs?: number;
+      }) => {
+        setSessionTimer({
+          timerStatus: data.timerStatus,
+          timerEndsAt: data.timerEndsAt || null,
+          timerRemainingMs: data.timerRemainingMs ?? null,
+        });
+      }
+    );
+
     return () => {
       socket.off("session:roster_updated");
       socket.off("team:roster_updated");
@@ -315,6 +435,11 @@ export default function FacilitatorDashboard() {
       socket.off("response:added");
       socket.off("whiteboard:submitted");
       socket.off("leaderboard:scores_updated");
+      socket.off("presentation:projected");
+      socket.off("presentation:chat_updated");
+      socket.off("like:added");
+      socket.off("comment:added");
+      socket.off("timer:updated");
     };
   }, [id, activeActivity?.id]);
 
@@ -365,6 +490,7 @@ export default function FacilitatorDashboard() {
     const facilitatorGiverName = currentUser?.name || currentUser?.username
       ? `Facilitator (${currentUser.name || currentUser.username})`
       : "Facilitator";
+    const targetP = participants.find((p) => p.id === awardTargetParticipant);
     try {
       const res = await fetch(`/api/sessions/${id}/points`, {
         method: "POST",
@@ -382,6 +508,12 @@ export default function FacilitatorDashboard() {
         const usedReason = awardReason || `Facilitator Award (${awardCategory})`;
         setShowAwardModal(false);
         setAwardReason("");
+        setSentConfirmation({
+          id: `pts-${Date.now()}`,
+          type: "POINTS",
+          title: `+${awardAmount} Points Sent!`,
+          detail: `Awarded to ${targetP?.displayName || "Participant"}: "${usedReason}"`,
+        });
         loadLeaderboard();
         const socket = getSocket();
         socket.emit("leaderboard:points_awarded", { sessionId: id });
@@ -416,11 +548,18 @@ export default function FacilitatorDashboard() {
     }
   };
 
-  const handleFacilitatorLike = (resp: any) => {
+  const handleFacilitatorLike = async (resp: any) => {
     const facilitatorGiverName = currentUser?.name || currentUser?.username
       ? `Facilitator (${currentUser.name || currentUser.username})`
       : "Facilitator";
     const reasonText = facilitatorLikeReason.trim() || "Great contribution recognized by the Facilitator!";
+    try {
+      await fetch(`/api/responses/${resp.id}/reactions`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ type: "LIKE", reason: reasonText }),
+      });
+    } catch {}
     const socket = getSocket();
     socket.emit("like:add", {
       sessionId: id,
@@ -432,14 +571,29 @@ export default function FacilitatorDashboard() {
     });
     setFacilitatorLikeForId(null);
     setFacilitatorLikeReason("");
+    setSentConfirmation({
+      id: `like-${Date.now()}`,
+      type: "FEEDBACK",
+      title: "Feedback Sent!",
+      detail: `Sent recognition to ${resp.participant?.displayName || "Participant"}: "${reasonText}"`,
+    });
+    loadPresentationChat();
+    if (activeActivity?.id) loadResponses(activeActivity.id);
   };
 
-  const handleFacilitatorComment = (resp: any) => {
+  const handleFacilitatorComment = async (resp: any) => {
     const contentText = facilitatorCommentText.trim();
     if (!contentText) return;
     const facilitatorName = currentUser?.name || currentUser?.username
       ? `Facilitator (${currentUser.name || currentUser.username})`
       : "Facilitator";
+    try {
+      await fetch(`/api/responses/${resp.id}/comments`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ content: contentText }),
+      });
+    } catch {}
     const socket = getSocket();
     socket.emit("comment:add", {
       sessionId: id,
@@ -452,11 +606,20 @@ export default function FacilitatorDashboard() {
     });
     setFacilitatorCommentForId(null);
     setFacilitatorCommentText("");
+    setSentConfirmation({
+      id: `comment-${Date.now()}`,
+      type: "COMMENT",
+      title: "Comment Sent!",
+      detail: `Replied to ${resp.participant?.displayName || "Participant"}: "${contentText}"`,
+    });
+    loadPresentationChat();
+    if (activeActivity?.id) loadResponses(activeActivity.id);
   };
 
   const handleAwardBadge = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!badgeTargetParticipant || !selectedBadgeId) return;
+    const targetP = participants.find((p) => p.id === badgeTargetParticipant);
     try {
       const res = await fetch(`/api/participants/${badgeTargetParticipant}/badges`, {
         method: "POST",
@@ -472,6 +635,12 @@ export default function FacilitatorDashboard() {
         const data = await res.json();
         setShowBadgeModal(false);
         setBadgeReason("");
+        setSentConfirmation({
+          id: `badge-${Date.now()}`,
+          type: "AWARD",
+          title: `Award Sent: ${data.badge?.name || "Badge"}!`,
+          detail: `Awarded to ${targetP?.displayName || "Participant"}`,
+        });
         loadLeaderboard();
         const socket = getSocket();
         socket.emit("badge:award", {
@@ -522,7 +691,6 @@ export default function FacilitatorDashboard() {
         headers: getAuthHeaders(),
         body: JSON.stringify({
           canvaPresentationUrl: canvaUrl.trim(),
-          canvaSlideCount: slideCount || 1,
         }),
       });
       if (res.ok) {
@@ -530,17 +698,14 @@ export default function FacilitatorDashboard() {
         setSession((prev: any) => ({
           ...prev,
           canvaPresentationUrl: updated.canvaPresentationUrl,
-          canvaSlideCount: updated.canvaSlideCount,
         }));
         setCanvaUrl(updated.canvaPresentationUrl || "");
-        setSlideCount(updated.canvaSlideCount || 1);
         setShowLinkModal(false);
 
         const socket = getSocket();
         socket.emit("presentation:linked", {
           sessionId: id,
           canvaPresentationUrl: updated.canvaPresentationUrl,
-          canvaSlideCount: updated.canvaSlideCount,
         });
       } else {
         const data = await res.json();
@@ -551,12 +716,295 @@ export default function FacilitatorDashboard() {
     }
   };
 
+  const handleUploadPresentation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadFiles || uploadFiles.length === 0) return;
+    setUploadingPresentation(true);
+    try {
+      const formData = new FormData();
+      Array.from(uploadFiles).forEach((f) => formData.append("files", f));
+      const token =
+        userToken || (typeof window !== "undefined" ? localStorage.getItem("tgms_user_token") : null);
+      const res = await fetch(`/api/sessions/${id}/presentation/upload`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to upload presentation");
+
+      setSession((prev: any) => ({
+        ...prev,
+        canvaPresentationUrl: data.canvaPresentationUrl,
+        canvaSlideCount: data.slideCount || prev?.canvaSlideCount,
+      }));
+      setCanvaUrl(data.canvaPresentationUrl || "");
+      if (data.slideCount) setSlideCount(data.slideCount);
+      setUploadFiles(null);
+      setShowLinkModal(false);
+
+      const socket = getSocket();
+      socket.emit("presentation:linked", {
+        sessionId: id,
+        canvaPresentationUrl: data.canvaPresentationUrl,
+      });
+    } catch (err: any) {
+      alert(err.message || "Failed to upload presentation");
+    } finally {
+      setUploadingPresentation(false);
+    }
+  };
+
+  const handleDeletePresentation = async () => {
+    if (!confirm("Are you sure you want to remove the linked/uploaded presentation?")) return;
+    try {
+      const res = await fetch(`/api/sessions/${id}/presentation`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to delete presentation link");
+      }
+      setSession((prev: any) => ({
+        ...prev,
+        canvaPresentationUrl: null,
+      }));
+      setCanvaUrl("");
+      setIsProjectingCanva(false);
+
+      const socket = getSocket();
+      socket.emit("presentation:project", {
+        sessionId: id,
+        isProjected: false,
+        canvaPresentationUrl: "",
+        chatEnabled: presentationChatEnabled,
+        allowInteractiveNavigation,
+        currentSlide,
+      });
+      socket.emit("presentation:linked", {
+        sessionId: id,
+        canvaPresentationUrl: null,
+      });
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const broadcastPresentationSettings = (
+    nextProjected: boolean,
+    nextChatEnabled: boolean,
+    nextAllowInteractive: boolean,
+    nextSlide: number
+  ) => {
+    if (!session?.canvaPresentationUrl) return;
+    const socket = getSocket();
+    socket.emit("presentation:project", {
+      sessionId: id,
+      isProjected: nextProjected,
+      canvaPresentationUrl: session.canvaPresentationUrl,
+      chatEnabled: nextChatEnabled,
+      allowInteractiveNavigation: nextAllowInteractive,
+      currentSlide: nextSlide,
+    });
+  };
+
+  const handleToggleProjectCanva = () => {
+    if (!session?.canvaPresentationUrl) {
+      setShowLinkModal(true);
+      return;
+    }
+    const nextState = !isProjectingCanva;
+    setIsProjectingCanva(nextState);
+    broadcastPresentationSettings(
+      nextState,
+      presentationChatEnabled,
+      allowInteractiveNavigation,
+      currentSlide
+    );
+  };
+
+  const handleTogglePresentationChat = () => {
+    const nextChat = !presentationChatEnabled;
+    setPresentationChatEnabled(nextChat);
+    broadcastPresentationSettings(
+      isProjectingCanva,
+      nextChat,
+      allowInteractiveNavigation,
+      currentSlide
+    );
+  };
+
+  const handleToggleInteractiveNavigation = () => {
+    const nextNav = !allowInteractiveNavigation;
+    setAllowInteractiveNavigation(nextNav);
+    broadcastPresentationSettings(
+      isProjectingCanva,
+      presentationChatEnabled,
+      nextNav,
+      currentSlide
+    );
+  };
+
+  const handleSendPresentationChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = presentationChatInput.trim();
+    if (!text || sendingPresentationChat) return;
+    setSendingPresentationChat(true);
+    try {
+      const res = await fetch(`/api/sessions/${id}/presentation/chat`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ content: text, isFacilitator: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to send chat message");
+      setPresentationChatInput("");
+      setPresentationChatMessages((prev) =>
+        prev.some((m) => m.id === data.id) ? prev : [...prev, data]
+      );
+      const socket = getSocket();
+      socket.emit("presentation:chat_message", {
+        sessionId: id,
+        message: data,
+      });
+      setSentConfirmation({
+        type: "MESSAGE_SENT",
+        title: "Live Chat Announcement Sent!",
+        detail: text,
+      });
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSendingPresentationChat(false);
+    }
+  };
+
+  const handleSessionTimerAction = (
+    action: "start" | "pause" | "resume" | "extend" | "complete",
+    durationSeconds?: number,
+    extraSeconds?: number
+  ) => {
+    const now = Date.now();
+    let nextStatus: "RUNNING" | "PAUSED" | "STOPPED" | "COMPLETED" = sessionTimer.timerStatus;
+    let nextEndsAt: string | null = sessionTimer.timerEndsAt;
+    let nextRemainingMs: number | null = sessionTimer.timerRemainingMs;
+
+    if (action === "start" && durationSeconds) {
+      nextStatus = "RUNNING";
+      nextRemainingMs = durationSeconds * 1000;
+      nextEndsAt = new Date(now + nextRemainingMs).toISOString();
+    } else if (action === "pause" && sessionTimer.timerStatus === "RUNNING") {
+      nextStatus = "PAUSED";
+      const endsMs = sessionTimer.timerEndsAt ? new Date(sessionTimer.timerEndsAt).getTime() : now;
+      nextRemainingMs = Math.max(0, endsMs - now);
+      nextEndsAt = null;
+    } else if (action === "resume" && sessionTimer.timerStatus === "PAUSED") {
+      nextStatus = "RUNNING";
+      const rem = sessionTimer.timerRemainingMs || 60000;
+      nextEndsAt = new Date(now + rem).toISOString();
+    } else if (action === "extend" && extraSeconds) {
+      const addMs = extraSeconds * 1000;
+      if (sessionTimer.timerStatus === "RUNNING" && sessionTimer.timerEndsAt) {
+        const endsMs = new Date(sessionTimer.timerEndsAt).getTime() + addMs;
+        nextEndsAt = new Date(endsMs).toISOString();
+        nextRemainingMs = Math.max(0, endsMs - now);
+      } else {
+        nextRemainingMs = (sessionTimer.timerRemainingMs || 0) + addMs;
+      }
+    } else if (action === "complete") {
+      nextStatus = "COMPLETED";
+      nextEndsAt = null;
+      nextRemainingMs = 0;
+    }
+
+    setSessionTimer({
+      timerStatus: nextStatus,
+      timerEndsAt: nextEndsAt,
+      timerRemainingMs: nextRemainingMs,
+    });
+
+    const socket = getSocket();
+    socket.emit("timer:sync", {
+      sessionId: id,
+      activityId: activeActivity?.id,
+      timerStatus: nextStatus,
+      timerEndsAt: nextEndsAt || undefined,
+      timerRemainingMs: nextRemainingMs ?? undefined,
+    });
+  };
+
+  const openAddParticipantModal = async () => {
+    setShowAddParticipantModal(true);
+    try {
+      const res = await fetch("/api/users?role=PARTICIPANT");
+      if (res.ok) {
+        const usersData = await res.json();
+        setAvailableUsers(usersData);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddParticipantToSession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session?.code) return;
+    let displayNameToEnroll = newParticipantName.trim();
+    if (selectedUserIdToAdd) {
+      const foundUser = availableUsers.find((u) => u.id === selectedUserIdToAdd);
+      if (foundUser) {
+        displayNameToEnroll = foundUser.name || foundUser.username;
+      }
+    }
+    if (!displayNameToEnroll) {
+      alert("Please select a user or enter a participant display name.");
+      return;
+    }
+    setAddingParticipant(true);
+    try {
+      const res = await fetch("/api/sessions/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: session.code,
+          displayName: displayNameToEnroll,
+          userId: selectedUserIdToAdd || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to add participant");
+
+      const sRes = await fetch(`/api/sessions/${id}`);
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        setParticipants(sData.participants || []);
+      }
+      loadLeaderboard();
+      setShowAddParticipantModal(false);
+      setSelectedUserIdToAdd("");
+      setNewParticipantName("");
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setAddingParticipant(false);
+    }
+  };
+
   const changeSlide = async (newSlide: number) => {
-    if (newSlide < 1 || newSlide > slideCount) return;
+    if (newSlide < 1) return;
     setCurrentSlide(newSlide);
 
     const socket = getSocket();
     socket.emit("presentation:slide_change", { sessionId: id, slideNumber: newSlide });
+    if (isProjectingCanva) {
+      broadcastPresentationSettings(
+        isProjectingCanva,
+        presentationChatEnabled,
+        allowInteractiveNavigation,
+        newSlide
+      );
+    }
 
     await fetch(`/api/sessions/${id}/slide`, {
       method: "POST",
@@ -794,7 +1242,7 @@ export default function FacilitatorDashboard() {
   };
 
   const handleConcludeSession = async () => {
-    if (!confirm("Are you sure you want to conclude this session? This will complete all active activities.")) {
+    if (!confirm("Are you sure you want to conclude this session? This will complete all active activities and return you to your Home Screen.")) {
       return;
     }
     try {
@@ -803,11 +1251,17 @@ export default function FacilitatorDashboard() {
         headers: getAuthHeaders(),
       });
       if (res.ok) {
+        if (isProjectingCanva) {
+          broadcastPresentationSettings(false, false, false, 1);
+          setIsProjectingCanva(false);
+        }
+        handleSessionTimerAction("complete");
         setSession((prev: any) => ({ ...prev, status: "COMPLETED" }));
         setActiveActivity(null);
-        const aRes = await fetch(`/api/sessions/${id}/activities`);
-        if (aRes.ok) setActivities(await aRes.json());
-        alert("Session successfully concluded. You can now download the complete JSON dataset or create a new session.");
+        setResponses([]);
+        setPresentationChatMessages([]);
+        setLeaderboardData({ participants: [], teams: [] });
+        router.push("/");
       }
     } catch (err: any) {
       alert(err.message);
@@ -862,30 +1316,7 @@ export default function FacilitatorDashboard() {
           <p className="text-xs text-slate-500 mt-0.5">Facilitator: {session.facilitator?.name || "Trainer"}</p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {currentUser ? (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
-              <div className="text-right">
-                <div className="text-xs font-semibold text-slate-800">{currentUser.name || currentUser.username}</div>
-                <div className="text-[10px] font-bold text-indigo-600 tracking-wider">{currentUser.role}</div>
-              </div>
-              <button
-                onClick={handleLogout}
-                className="ml-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-lg transition"
-                title="Sign out of facilitator console"
-              >
-                Sign Out
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowLoginModal(true)}
-              className="px-3.5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm transition"
-            >
-              Sign In as Facilitator
-            </button>
-          )}
-
+        <div className="flex flex-wrap items-center gap-2.5">
           <div className="flex items-center bg-slate-100 rounded-xl px-3 py-1.5 border border-slate-200">
             <span className="text-xs text-slate-500 mr-2 font-medium">Join Code:</span>
             <span className="font-mono text-lg font-bold text-indigo-600 tracking-wider mr-2">
@@ -909,12 +1340,12 @@ export default function FacilitatorDashboard() {
           </button>
 
           <Link
-            href="/sessions"
+            href="/"
             className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm rounded-xl border border-slate-200 shadow-sm transition"
-            title="Return to Sessions List"
+            title="Return to Home Screen"
           >
             <Presentation className="w-4 h-4 text-indigo-600" />
-            Sessions
+            Home
           </Link>
 
           <Link
@@ -949,7 +1380,7 @@ export default function FacilitatorDashboard() {
             <button
               onClick={handleConcludeSession}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium text-sm rounded-xl border border-rose-200 shadow-sm transition"
-              title="Conclude Session & Lock Activities"
+              title="Conclude Session & Return to Home Screen"
             >
               <CheckCircle className="w-4 h-4 text-rose-600" />
               Conclude
@@ -963,6 +1394,29 @@ export default function FacilitatorDashboard() {
               <Plus className="w-4 h-4" />
               Create New Session
             </Link>
+          )}
+
+          {currentUser ? (
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+              <UserAvatarButton
+                user={currentUser}
+                onProfileUpdated={(updated) => setCurrentUser(updated)}
+              />
+              <button
+                onClick={handleLogout}
+                className="px-2.5 py-2 text-xs font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-xl transition"
+                title="Sign out of facilitator console"
+              >
+                Sign Out
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowLoginModal(true)}
+              className="px-3.5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm transition"
+            >
+              Sign In as Facilitator
+            </button>
           )}
         </div>
       </header>
@@ -1039,50 +1493,502 @@ export default function FacilitatorDashboard() {
           )}
 
           {/* Presentation Controller */}
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
                 <Presentation className="w-5 h-5 text-indigo-600" />
-                <h2 className="text-base font-bold text-slate-800">Presentation Controller</h2>
-              </div>
-              <button
-                onClick={() => setShowLinkModal(true)}
-                className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 rounded-lg transition"
-              >
-                <Link2 className="w-3.5 h-3.5" />
-                {session.canvaPresentationUrl ? "Edit Presentation Link" : "Link Canva Presentation"}
-              </button>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => changeSlide(currentSlide - 1)}
-                  disabled={currentSlide <= 1}
-                  className="p-2 bg-white rounded-lg border border-slate-200 hover:bg-slate-100 disabled:opacity-40 transition"
-                >
-                  <ChevronLeft className="w-5 h-5 text-slate-700" />
-                </button>
-                <div className="px-4 py-1.5 bg-white rounded-lg border border-slate-200 text-sm font-bold text-slate-800 font-mono">
-                  Slide {currentSlide} / {slideCount}
+                <div>
+                  <h2 className="text-base font-bold text-slate-800">
+                    Presentation & Screen Projection Controller
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Link Canva or upload your presentation, control interactive slide navigation, live chat, and synchronized timer
+                  </p>
                 </div>
-                <button
-                  onClick={() => changeSlide(currentSlide + 1)}
-                  disabled={currentSlide >= slideCount}
-                  className="p-2 bg-white rounded-lg border border-slate-200 hover:bg-slate-100 disabled:opacity-40 transition"
-                >
-                  <ChevronRight className="w-5 h-5 text-slate-700" />
-                </button>
               </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {session.canvaPresentationUrl && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleToggleProjectCanva}
+                      className={`text-xs font-bold flex items-center gap-1.5 px-3.5 py-2 rounded-xl transition shadow-sm ${
+                        isProjectingCanva
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                          : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                      }`}
+                    >
+                      <Presentation className="w-4 h-4" />
+                      {isProjectingCanva ? "Projecting Screen (Stop)" : "Project Screen"}
+                    </button>
 
-              <div className="text-xs text-slate-500">
-                {mappings.find((m) => m.slideNumber === currentSlide)?.title ? (
-                  <span>Checkpoint: <strong className="text-slate-800">{mappings.find((m) => m.slideNumber === currentSlide).title}</strong></span>
-                ) : (
-                  <span>No checkpoint on Slide {currentSlide}</span>
+                    <button
+                      type="button"
+                      onClick={handleToggleInteractiveNavigation}
+                      className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-2 rounded-xl border transition ${
+                        allowInteractiveNavigation
+                          ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                          : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                      }`}
+                      title="Enable or disable participant interactive slide navigation"
+                    >
+                      <MousePointerClick className="w-3.5 h-3.5" />
+                      {allowInteractiveNavigation
+                        ? "Interactive Nav: ON"
+                        : "Interactive Nav: OFF"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleTogglePresentationChat}
+                      className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-2 rounded-xl border transition ${
+                        presentationChatEnabled
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                      }`}
+                      title="Enable or disable live chat during presentation"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      {presentationChatEnabled ? "Live Chat: ON" : "Live Chat: OFF"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowFacilitatorChatPanel((prev) => !prev)}
+                      className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-2 rounded-xl border transition ${
+                        showFacilitatorChatPanel
+                          ? "bg-purple-50 text-purple-700 border-purple-200"
+                          : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                      }`}
+                      title="Hide or unhide the Presentation Live Chat panel"
+                    >
+                      {showFacilitatorChatPanel ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                      {showFacilitatorChatPanel ? "Hide Live Chat" : "Unhide Live Chat"}
+                    </button>
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLinkModalTab("link");
+                    setShowLinkModal(true);
+                  }}
+                  className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1.5 px-3 py-2 bg-indigo-50 rounded-xl transition"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  {session.canvaPresentationUrl ? "Change / Upload" : "Link / Upload Presentation"}
+                </button>
+
+                {session.canvaPresentationUrl && (
+                  <button
+                    type="button"
+                    onClick={handleDeletePresentation}
+                    className="text-xs font-semibold text-rose-600 hover:text-rose-800 flex items-center gap-1 px-2.5 py-2 bg-rose-50 hover:bg-rose-100 rounded-xl transition"
+                    title="Delete / Unlink Presentation"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete Link
+                  </button>
                 )}
               </div>
             </div>
+
+            {/* Synchronous Countdown Timer Bar (works during Screen Projections and Interactions) */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-900 text-white rounded-xl">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-300">
+                  <Timer className="w-4 h-4 text-indigo-400" />
+                  <span>Projection & Session Timer:</span>
+                </div>
+                <DigitalTimer
+                  endsAt={sessionTimer.timerEndsAt}
+                  remainingMs={sessionTimer.timerRemainingMs}
+                  status={sessionTimer.timerStatus}
+                  onExpire={() => handleSessionTimerAction("complete")}
+                  size="sm"
+                />
+                <div className="flex items-center gap-1.5">
+                  {sessionTimer.timerStatus !== "RUNNING" ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleSessionTimerAction("start", 60)}
+                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg text-slate-200 transition"
+                      >
+                        1m
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSessionTimerAction("start", 180)}
+                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg text-slate-200 transition"
+                      >
+                        3m
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSessionTimerAction("start", 300)}
+                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg text-slate-200 transition"
+                      >
+                        5m
+                      </button>
+                      {sessionTimer.timerStatus === "PAUSED" && (
+                        <button
+                          type="button"
+                          onClick={() => handleSessionTimerAction("resume")}
+                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold rounded-lg text-white transition"
+                        >
+                          Resume
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleSessionTimerAction("pause")}
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-xs font-semibold rounded-lg text-white transition"
+                      >
+                        Pause
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSessionTimerAction("extend", undefined, 60)}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold rounded-lg text-white transition"
+                      >
+                        +1m
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSessionTimerAction("complete")}
+                        className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-xs font-semibold rounded-lg text-white transition"
+                      >
+                        Stop
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              {sessionTimer.timerStatus === "RUNNING" && (
+                <span className="text-[11px] text-emerald-400 font-mono animate-pulse">
+                  ● Synced to Participants & Projector
+                </span>
+              )}
+            </div>
+
+            {session.canvaPresentationUrl ? (
+              <div className="space-y-4">
+                <div className="aspect-video w-full rounded-xl overflow-hidden shadow-md border border-slate-200 bg-black">
+                  <PresentationViewer
+                    url={session.canvaPresentationUrl}
+                    currentSlide={currentSlide}
+                    allowInteractiveNavigation={true}
+                    isFacilitator={true}
+                    onSlideChange={(s) => changeSlide(s)}
+                  />
+                </div>
+
+                {/* Slide Sync & Status Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        isProjectingCanva ? "bg-emerald-500 animate-ping" : "bg-slate-400"
+                      }`}
+                    />
+                    <span className="font-medium">
+                      {isProjectingCanva
+                        ? `Projecting live to participants (${
+                            allowInteractiveNavigation
+                              ? "Interactive Nav Enabled"
+                              : "Synced to Presenter's View"
+                          })`
+                        : "Click 'Project Screen' to share this presentation with all participants."}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => changeSlide(Math.max(1, currentSlide - 1))}
+                        disabled={currentSlide <= 1}
+                        className="p-1 rounded hover:bg-slate-100 disabled:opacity-40 text-slate-700"
+                        title="Sync Previous Slide"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="font-mono font-bold text-slate-800 px-1">
+                        Slide {currentSlide}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => changeSlide(currentSlide + 1)}
+                        className="p-1 rounded hover:bg-slate-100 text-slate-700"
+                        title="Sync Next Slide"
+                      >
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <Link
+                      href={`/sessions/${id}/projector`}
+                      target="_blank"
+                      className="font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                    >
+                      <span>Projector View</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </Link>
+                  </div>
+                </div>
+
+                {/* Live Presentation Chat & Facilitator Feedback / Points / Awards Panel */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50/60 overflow-hidden">
+                  <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="w-4 h-4 text-indigo-600" />
+                      <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                        Live Presentation Chat ({presentationChatMessages.length})
+                      </h3>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          presentationChatEnabled
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-slate-200 text-slate-600"
+                        }`}
+                      >
+                        {presentationChatEnabled ? "Participants Can Chat" : "Participant Chat Disabled"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[11px] text-slate-500 hidden sm:inline">
+                        Give feedbacks, comments, points & awards directly on messages
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowFacilitatorChatPanel((prev) => !prev)}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-1 transition"
+                      >
+                        {showFacilitatorChatPanel ? (
+                          <>
+                            <EyeOff className="w-3.5 h-3.5" />
+                            Hide Chat
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="w-3.5 h-3.5" />
+                            Unhide Chat
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {showFacilitatorChatPanel && (
+                    <>
+                      <div className="p-3.5 space-y-2.5 max-h-72 overflow-y-auto">
+                        {presentationChatMessages.length === 0 ? (
+                          <div className="text-center py-6 text-xs text-slate-400">
+                            No presentation chat messages yet. Participants can ask questions or share thoughts while viewing your projected slides!
+                          </div>
+                        ) : (
+                          presentationChatMessages.map((msg) => (
+                            <div
+                              key={msg.id}
+                              className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm space-y-1.5"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => msg.participantId && setInspectedParticipantId(msg.participantId)}
+                                  className="text-xs font-bold text-indigo-700 hover:underline flex items-center gap-1.5"
+                                  title="Inspect Participant Profile"
+                                >
+                                  <span>{msg.participant?.displayName || "Facilitator"}</span>
+                                  <span className="text-[10px] font-normal text-slate-400">
+                                    {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString() : ""}
+                                  </span>
+                                </button>
+
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFacilitatorLikeForId(facilitatorLikeForId === msg.id ? null : msg.id);
+                                      setFacilitatorCommentForId(null);
+                                    }}
+                                    className="px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 text-pink-600 hover:bg-pink-50 border border-pink-100 transition"
+                                  >
+                                    <ThumbsUp className="w-3 h-3" />
+                                    Feedback ({msg.reactions?.length || 0})
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFacilitatorCommentForId(
+                                        facilitatorCommentForId === msg.id ? null : msg.id
+                                      );
+                                      setFacilitatorLikeForId(null);
+                                    }}
+                                    className="px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 text-indigo-600 hover:bg-indigo-50 border border-indigo-100 transition"
+                                  >
+                                    <MessageCircle className="w-3 h-3" />
+                                    Comment ({msg.comments?.length || 0})
+                                  </button>
+                                  {msg.participantId && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setAwardTargetParticipant(msg.participantId);
+                                          setAwardCategory("FACILITATOR");
+                                          setShowAwardModal(true);
+                                        }}
+                                        className="px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 text-amber-700 hover:bg-amber-50 border border-amber-200 transition"
+                                      >
+                                        <Award className="w-3 h-3" />
+                                        +Pts
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setBadgeTargetParticipant(msg.participantId);
+                                          setShowBadgeModal(true);
+                                        }}
+                                        className="px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 text-purple-700 hover:bg-purple-50 border border-purple-200 transition"
+                                      >
+                                        <Sparkles className="w-3 h-3" />
+                                        +Award
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              <p className="text-xs text-slate-800">{msg.content}</p>
+
+                              {/* Existing Replies/Comments */}
+                              {msg.comments && msg.comments.length > 0 && (
+                                <div className="pl-3 border-l-2 border-indigo-100 space-y-1 pt-1">
+                                  {msg.comments.map((c: any) => (
+                                    <div key={c.id} className="text-[11px] text-slate-600">
+                                      <strong className="text-slate-800">
+                                        {c.participant?.displayName || "Facilitator"}:
+                                      </strong>{" "}
+                                      {c.content}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {facilitatorLikeForId === msg.id && (
+                                <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={facilitatorLikeReason}
+                                    onChange={(e) => setFacilitatorLikeReason(e.target.value)}
+                                    placeholder="Write positive feedback / recognition..."
+                                    className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-800"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleFacilitatorLike(msg)}
+                                    className="px-3 py-1.5 bg-pink-600 hover:bg-pink-700 text-white text-xs font-semibold rounded-lg transition"
+                                  >
+                                    Send Feedback
+                                  </button>
+                                </div>
+                              )}
+
+                              {facilitatorCommentForId === msg.id && (
+                                <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={facilitatorCommentText}
+                                    onChange={(e) => setFacilitatorCommentText(e.target.value)}
+                                    placeholder="Write reply / comment..."
+                                    className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-800"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleFacilitatorComment(msg)}
+                                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition"
+                                  >
+                                    Send Reply
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Facilitator Chat Input */}
+                      <form
+                        onSubmit={handleSendPresentationChat}
+                        className="p-2.5 bg-white border-t border-slate-200 flex items-center gap-2"
+                      >
+                        <input
+                          type="text"
+                          value={presentationChatInput}
+                          onChange={(e) => setPresentationChatInput(e.target.value)}
+                          placeholder="Post a message or announcement to the presentation chat..."
+                          className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!presentationChatInput.trim() || sendingPresentationChat}
+                          className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          Send
+                        </button>
+                      </form>
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-8 bg-slate-50 rounded-xl border border-dashed border-slate-300 text-center space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto">
+                  <Presentation className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">No Presentation Linked or Uploaded</h3>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                    Link your Canva presentation URL or upload your own presentation deck (PDF, Slide Images, or PPTX) to project and share live with participants.
+                  </p>
+                </div>
+                <div className="flex items-center justify-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLinkModalTab("link");
+                      setShowLinkModal(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-sm transition"
+                  >
+                    <Link2 className="w-3.5 h-3.5" />
+                    Link Canva URL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLinkModalTab("upload");
+                      setShowLinkModal(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold rounded-xl shadow-sm transition"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                    Upload Presentation
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Active Activity & Live Responses Command Panel */}
@@ -1716,19 +2622,28 @@ export default function FacilitatorDashboard() {
         {/* Right Column: Participant Roster */}
         <div className="space-y-6">
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
                 <Users className="w-5 h-5 text-indigo-600" />
                 Connected Participants
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={openAddParticipantModal}
+                  className="px-2.5 py-1 text-[11px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition flex items-center gap-1 shadow-sm"
+                  title="Add a Participant to this Session"
+                >
+                  <Plus className="w-3 h-3" />
+                  Add Participant
+                </button>
                 <Link
                   href="/users"
                   target="_blank"
                   className="px-2.5 py-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition flex items-center gap-1"
                 >
                   <UserPlus className="w-3 h-3" />
-                  Manage Users
+                  Users
                 </Link>
                 <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-indigo-50 text-indigo-700">
                   {participants.length}
@@ -1743,18 +2658,37 @@ export default function FacilitatorDashboard() {
             ) : (
               <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto pr-1">
                 {participants.map((p) => (
-                  <div key={p.id} className="py-2.5 flex items-center justify-between">
+                  <div
+                    key={p.id}
+                    className="py-2.5 flex items-center justify-between hover:bg-slate-50 px-2 rounded-lg transition cursor-pointer"
+                    onClick={() => setInspectedParticipantId(p.id)}
+                    title="Click to inspect participant profile, session info, points, awards & interactions"
+                  >
                     <div className="flex items-center gap-2.5">
                       <span
                         className={`w-2.5 h-2.5 rounded-full ${
                           p.isConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-300"
                         }`}
                       />
-                      <span className="text-sm font-medium text-slate-800">{p.displayName}</span>
+                      <span className="text-sm font-medium text-slate-800 hover:text-indigo-600 hover:underline">
+                        {p.displayName}
+                      </span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400 font-mono">{p.totalPoints} pts</span>
+                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                      <span className="text-xs text-slate-500 font-mono font-semibold">{p.totalPoints} pts</span>
                       <button
+                        type="button"
+                        onClick={() => {
+                          setAwardTargetParticipant(p.id);
+                          setShowAwardModal(true);
+                        }}
+                        title="Award Points"
+                        className="p-1 hover:bg-indigo-50 rounded text-slate-400 hover:text-indigo-600 transition"
+                      >
+                        <Award className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => {
                           setBadgeTargetParticipant(p.id);
                           setShowBadgeModal(true);
@@ -1830,7 +2764,13 @@ export default function FacilitatorDashboard() {
                           key={m.id}
                           className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-100 text-xs"
                         >
-                          <span className="text-slate-700 truncate max-w-[120px]">{m.displayName}</span>
+                          <button
+                            type="button"
+                            onClick={() => setInspectedParticipantId(m.id)}
+                            className="text-slate-700 hover:text-indigo-600 hover:underline truncate max-w-[120px] text-left font-medium"
+                          >
+                            {m.displayName}
+                          </button>
                           <select
                             value={team.id}
                             onChange={(e) => handleReassign(m.id, e.target.value === "none" ? null : e.target.value)}
@@ -1906,10 +2846,87 @@ export default function FacilitatorDashboard() {
               participants={leaderboardData.participants}
               teams={leaderboardData.teams}
               compact={true}
+              onSelectParticipant={(pid) => setInspectedParticipantId(pid)}
             />
           </div>
         </div>
       </div>
+
+      {/* Add Participant to Session Modal */}
+      {showAddParticipantModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-indigo-600" />
+                Add Participant to Session
+              </h3>
+              <button
+                onClick={() => setShowAddParticipantModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-semibold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAddParticipantToSession} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Select Existing User Account (Optional):
+                </label>
+                <select
+                  value={selectedUserIdToAdd}
+                  onChange={(e) => {
+                    const uid = e.target.value;
+                    setSelectedUserIdToAdd(uid);
+                    const found = availableUsers.find((u) => u.id === uid);
+                    if (found) setNewParticipantName(found.name || found.username);
+                  }}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                >
+                  <option value="">-- Or enter a custom participant name below --</option>
+                  {availableUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name || u.username} (@{u.username})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Participant Display Name:
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newParticipantName}
+                  onChange={(e) => setNewParticipantName(e.target.value)}
+                  placeholder="e.g. Jordan Lee"
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddParticipantModal(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingParticipant || !newParticipantName.trim()}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm"
+                >
+                  {addingParticipant ? "Adding..." : "Enroll Participant"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Manual Point Award Modal */}
       {showAwardModal && (
@@ -2088,14 +3105,14 @@ export default function FacilitatorDashboard() {
         </div>
       )}
 
-      {/* Canva Presentation Link Modal */}
+      {/* Link or Upload Presentation Modal */}
       {showLinkModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Presentation className="w-5 h-5 text-indigo-600" />
-                Link Canva Presentation
+                Link Canva or Upload Presentation
               </h3>
               <button
                 onClick={() => setShowLinkModal(false)}
@@ -2105,76 +3122,150 @@ export default function FacilitatorDashboard() {
               </button>
             </div>
 
-            <form onSubmit={handleSavePresentation} className="space-y-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Canva Share / View / Embed URL:
-                </label>
-                <textarea
-                  rows={2}
-                  required
-                  placeholder="Paste Canva view link or <iframe src='...'></iframe> embed code"
-                  value={canvaUrl}
-                  onChange={(e) => setCanvaUrl(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 font-mono"
-                />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Supports Canva Public View links (<code>https://www.canva.com/design/.../view</code>) or full HTML embed iframes.
-                </p>
-              </div>
+            {/* Tab Selector */}
+            <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl mb-4">
+              <button
+                type="button"
+                onClick={() => setLinkModalTab("link")}
+                className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                  linkModalTab === "link"
+                    ? "bg-white text-indigo-700 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                Canva / Embed Link
+              </button>
+              <button
+                type="button"
+                onClick={() => setLinkModalTab("upload")}
+                className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                  linkModalTab === "upload"
+                    ? "bg-white text-indigo-700 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <Upload className="w-3.5 h-3.5" />
+                Upload Presentation File
+              </button>
+            </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Total Slide Count:
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={200}
-                  required
-                  value={slideCount}
-                  onChange={(e) => setSlideCount(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-28 px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 font-bold"
-                />
-              </div>
+            {linkModalTab === "link" ? (
+              <form onSubmit={handleSavePresentation} className="space-y-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                    Canva Share / View / Embed URL:
+                  </label>
+                  <textarea
+                    rows={2}
+                    required
+                    placeholder="Paste Canva view link or <iframe src='...'></iframe> embed code"
+                    value={canvaUrl}
+                    onChange={(e) => setCanvaUrl(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 font-mono"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Supports Canva Public View links (<code>https://www.canva.com/design/.../view</code>) or full HTML embed iframes.
+                  </p>
+                </div>
 
-              {/* Live Preview if URL contains canva */}
-              {canvaUrl && (
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">
-                    Embed Preview
-                  </span>
-                  <div className="aspect-video w-full rounded-lg overflow-hidden bg-slate-200">
-                    <iframe
-                      src={
-                        canvaUrl.includes("view?embed")
-                          ? canvaUrl
-                          : canvaUrl.replace("/view", "/view?embed")
-                      }
-                      className="w-full h-full border-0"
-                      allowFullScreen
-                    />
+                {canvaUrl && (
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">
+                      Presentation Preview
+                    </span>
+                    <div className="aspect-video w-full rounded-lg overflow-hidden bg-slate-200">
+                      <PresentationViewer
+                        url={canvaUrl}
+                        currentSlide={1}
+                        allowInteractiveNavigation={true}
+                        isFacilitator={true}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-2">
+                  {session.canvaPresentationUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowLinkModal(false);
+                        handleDeletePresentation();
+                      }}
+                      className="px-3 py-2 text-rose-600 hover:bg-rose-50 text-xs font-semibold rounded-xl flex items-center gap-1 transition"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete Current Link
+                    </button>
+                  ) : (
+                    <div />
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowLinkModal(false)}
+                      className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!canvaUrl.trim()}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm"
+                    >
+                      Save Presentation
+                    </button>
                   </div>
                 </div>
-              )}
+              </form>
+            ) : (
+              <form onSubmit={handleUploadPresentation} className="space-y-4">
+                <div className="p-5 border-2 border-dashed border-indigo-200 rounded-2xl bg-indigo-50/40 text-center space-y-2">
+                  <Upload className="w-8 h-8 text-indigo-600 mx-auto" />
+                  <div className="text-xs font-bold text-slate-800">
+                    Select Presentation File(s) to Upload
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Upload a <strong>.PDF</strong> presentation, multiple slide images (<strong>.PNG, .JPG, .WEBP</strong>), or a <strong>.PPTX</strong> deck.
+                  </p>
+                  <input
+                    type="file"
+                    multiple
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.pptx,.ppt"
+                    onChange={(e) => setUploadFiles(e.target.files)}
+                    className="block w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-700 mt-2"
+                  />
+                </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowLinkModal(false)}
-                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!canvaUrl.trim()}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm"
-                >
-                  Save Presentation
-                </button>
-              </div>
-            </form>
+                {uploadFiles && uploadFiles.length > 0 && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
+                    <strong>{uploadFiles.length} file(s) ready:</strong>{" "}
+                    {Array.from(uploadFiles)
+                      .map((f) => f.name)
+                      .join(", ")}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowLinkModal(false)}
+                    className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!uploadFiles || uploadFiles.length === 0 || uploadingPresentation}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition shadow-sm flex items-center gap-1.5"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    {uploadingPresentation ? "Uploading..." : "Upload & Link Presentation"}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -2255,6 +3346,31 @@ export default function FacilitatorDashboard() {
           </div>
         </div>
       )}
+
+      {/* Participant Detail Inspector Modal */}
+      {inspectedParticipantId && (
+        <ParticipantDetailModal
+          participantId={inspectedParticipantId}
+          onClose={() => setInspectedParticipantId(null)}
+          onAwardPoints={(pid) => {
+            setInspectedParticipantId(null);
+            setAwardTargetParticipant(pid);
+            setShowAwardModal(true);
+          }}
+          onAwardBadge={(pid) => {
+            setInspectedParticipantId(null);
+            setBadgeTargetParticipant(pid);
+            setShowBadgeModal(true);
+          }}
+        />
+      )}
+
+      {/* Animated Confirmation Effect for Sent Feedbacks, Points, Awards, or Comments */}
+      <SentConfirmationEffect
+        event={sentConfirmation}
+        onDismiss={() => setSentConfirmation(null)}
+      />
     </div>
   );
 }
+

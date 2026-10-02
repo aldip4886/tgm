@@ -514,10 +514,14 @@ export async function getActivityById(activityId: string) {
       responses: {
         include: {
           participant: { select: { id: true, displayName: true, role: true } },
-          reactions: true,
+          team: { select: { id: true, name: true } },
+          reactions: {
+            include: { participant: { select: { id: true, displayName: true } } },
+          },
           comments: {
             include: { participant: { select: { id: true, displayName: true } } },
           },
+          points: true,
         },
         orderBy: { createdAt: "desc" },
       },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { toggleReaction } from "@/services/peer-interaction.service";
-import { verifyParticipantToken } from "@/lib/auth";
+import { verifyParticipantToken, verifyUserToken } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import { z } from "zod";
 
 const reactionSchema = z.object({
@@ -21,32 +22,73 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const token = authHeader.substring(7);
-    const payload = await verifyParticipantToken(token);
+
+    let participantId: string | null = null;
+    try {
+      const payload = await verifyParticipantToken(token);
+      participantId = payload.participantId;
+    } catch {
+      const userPayload = await verifyUserToken(token);
+      const targetResp = await prisma.response.findUnique({
+        where: { id: responseId },
+        include: { activity: true },
+      });
+      if (!targetResp) {
+        return NextResponse.json({ error: "Response not found" }, { status: 404 });
+      }
+      const sessionId = targetResp.activity.sessionId;
+      const displayName = `Facilitator (${userPayload.username})`;
+      let facParticipant = await prisma.sessionParticipant.findFirst({
+        where: {
+          sessionId,
+          OR: [{ userId: userPayload.userId }, { displayName }],
+        },
+      });
+      if (!facParticipant) {
+        facParticipant = await prisma.sessionParticipant.create({
+          data: {
+            sessionId,
+            userId: userPayload.userId,
+            displayName,
+            role: "FACILITATOR",
+            token: `fac_${sessionId}_${userPayload.userId}_${Date.now()}`,
+            isConnected: true,
+          },
+        });
+      }
+      participantId = facParticipant.id;
+    }
 
     const body = await req.json().catch(() => ({}));
     const validated = reactionSchema.parse(body);
 
     const result = await toggleReaction(
       responseId,
-      payload.participantId,
+      participantId!,
       validated.type,
       validated.reason
     );
 
-    if (result.reacted && result.recipientId && result.recipientId !== payload.participantId) {
-      try {
-        const { getIO } = await import("@/lib/socket");
-        const io = getIO();
-        const sessionId = result.sessionId || payload.sessionId;
-        io.to(`session:${sessionId}`).emit("like:received_notification", {
-          notificationId: result.reactionId,
-          recipientId: result.recipientId,
-          giverName: result.giverName || payload.displayName || "A peer",
-          reason: result.reason || "Liked your submission!",
+    try {
+      const { getIO } = await import("@/lib/socket");
+      const io = getIO();
+      const sessionId = result.sessionId;
+      if (io && sessionId) {
+        io.to(`session:${sessionId}`).emit("presentation:chat_updated", {
+          type: "INTERACTION_UPDATED",
           responseId,
         });
-      } catch {}
-    }
+        if (result.reacted && result.recipientId && result.recipientId !== participantId) {
+          io.to(`session:${sessionId}`).emit("like:received_notification", {
+            notificationId: result.reactionId,
+            recipientId: result.recipientId,
+            giverName: result.giverName || "Facilitator",
+            reason: result.reason || "Liked your submission!",
+            responseId,
+          });
+        }
+      }
+    } catch {}
 
     return NextResponse.json(result);
   } catch (error: any) {
@@ -56,3 +98,4 @@ export async function POST(
     );
   }
 }
+

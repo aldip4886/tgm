@@ -9,6 +9,7 @@ const createSessionSchema = z.object({
   description: z.string().optional(),
   facilitatorName: z.string().min(2, "Facilitator name is required"),
   facilitatorEmail: z.string().email("Valid email required"),
+  facilitatorId: z.string().optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -103,12 +104,31 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const validated = createSessionSchema.parse(body);
+
+    if (authUser && authUser.role === "FACILITATOR") {
+      if (validated.facilitatorId && validated.facilitatorId !== authUser.userId) {
+        return NextResponse.json(
+          { error: "Forbidden: Facilitators cannot assign sessions to another facilitator." },
+          { status: 403 }
+        );
+      }
+    }
+
+    const targetFacilitatorId =
+      authUser?.role === "ADMIN" || authUser?.role === "SUPER_ADMIN"
+        ? validated.facilitatorId || authUser.userId
+        : authUser?.userId;
+
     const session = await createSession({
       ...validated,
-      facilitatorId: authUser?.userId,
-      facilitatorUsername: authUser?.username,
+      facilitatorId: targetFacilitatorId,
+      facilitatorUsername:
+        targetFacilitatorId === authUser?.userId ? authUser?.username : undefined,
       facilitatorName: validated.facilitatorName || authUser?.username || "Facilitator",
-      facilitatorEmail: authUser?.email || validated.facilitatorEmail,
+      facilitatorEmail:
+        targetFacilitatorId === authUser?.userId
+          ? authUser?.email || validated.facilitatorEmail
+          : validated.facilitatorEmail,
     });
     return NextResponse.json(session, { status: 201 });
   } catch (error: any) {

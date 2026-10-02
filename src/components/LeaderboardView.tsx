@@ -41,6 +41,7 @@ export interface LeaderboardViewProps {
   teams: LeaderboardTeam[];
   theme?: "light" | "dark";
   compact?: boolean;
+  onSelectParticipant?: (participantId: string) => void;
 }
 
 export function LeaderboardView({
@@ -48,6 +49,7 @@ export function LeaderboardView({
   teams,
   theme = "light",
   compact = false,
+  onSelectParticipant,
 }: LeaderboardViewProps) {
   const [tab, setTab] = useState<"individual" | "team">("individual");
 
@@ -146,7 +148,10 @@ export function LeaderboardView({
             participants.map((p) => (
               <div
                 key={p.id}
+                onClick={() => onSelectParticipant?.(p.id)}
                 className={`p-3 rounded-xl border flex items-center justify-between transition ${
+                  onSelectParticipant ? "cursor-pointer" : ""
+                } ${
                   p.rank === 1
                     ? isDark
                       ? "bg-amber-950/20 border-amber-800/40"
@@ -160,7 +165,9 @@ export function LeaderboardView({
                   {getRankBadge(p.rank)}
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-inherit">{p.displayName}</span>
+                      <span className={`text-sm font-bold text-inherit ${onSelectParticipant ? "hover:underline" : ""}`}>
+                        {p.displayName}
+                      </span>
                       {p.team && (
                         <span
                           className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${

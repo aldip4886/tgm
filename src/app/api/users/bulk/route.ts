@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bulkUploadUsers } from "@/services/user.service";
-import { verifyFacilitatorAuth } from "@/lib/auth";
+import { verifyAdminAuth } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     let actorRole: string | undefined;
 
     if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
-      const payload = await verifyFacilitatorAuth(req);
+      const payload = await verifyAdminAuth(req);
       actorRole = payload.role;
     }
 
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     const result = await bulkUploadUsers(csvData, actorRole);
     return NextResponse.json(result);
   } catch (err: any) {
-    const status = err.status || 400;
+    const status = err.status || (err.message?.includes("Forbidden") ? 403 : 400);
     return NextResponse.json({ error: err.message }, { status });
   }
 }

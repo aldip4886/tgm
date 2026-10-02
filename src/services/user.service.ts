@@ -25,6 +25,10 @@ export interface CreateUserInput {
 }
 
 export async function createUser(input: CreateUserInput, actorRole?: string) {
+  if (actorRole === "FACILITATOR") {
+    throw new Error("Forbidden: Facilitators cannot create or modify user accounts. Only Administrators can do this.");
+  }
+
   const username = input.username.trim().toLowerCase();
   if (!username) throw new Error("Username is required");
   if (!input.password || input.password.length < 4) {
@@ -71,6 +75,73 @@ export async function createUser(input: CreateUserInput, actorRole?: string) {
   return sanitized;
 }
 
+export interface UpdateUserInput {
+  name?: string;
+  username?: string;
+  email?: string | null;
+  role?: string;
+  password?: string;
+}
+
+export async function updateUser(
+  userId: string,
+  input: UpdateUserInput,
+  actorRole?: string,
+  actorUserId?: string
+) {
+  const isSelfEdit = Boolean(actorUserId && actorUserId === userId);
+  const isAdmin = actorRole === "ADMIN" || actorRole === "SUPER_ADMIN";
+
+  if (!isAdmin && !isSelfEdit) {
+    throw new Error("Forbidden: Facilitators cannot change user accounts. Only Administrators can do this.");
+  }
+
+  const existing = await prisma.user.findUnique({ where: { id: userId } });
+  if (!existing) throw new Error("User not found");
+
+  if (!isSelfEdit && existing.role === "SUPER_ADMIN" && actorRole !== "SUPER_ADMIN") {
+    throw new Error("Forbidden: Only a Super Admin can modify a Super Admin account");
+  }
+
+  const targetRole = isAdmin && input.role ? input.role.toUpperCase() : existing.role;
+  if (targetRole === "SUPER_ADMIN" && actorRole !== "SUPER_ADMIN") {
+    throw new Error("Forbidden: Admins cannot promote users to Super Admin");
+  }
+
+  let normalizedUsername: string | undefined = undefined;
+  if (input.username !== undefined && input.username.trim()) {
+    normalizedUsername = input.username.trim().toLowerCase();
+    if (normalizedUsername !== existing.username) {
+      const taken = await prisma.user.findUnique({ where: { username: normalizedUsername } });
+      if (taken && taken.id !== userId) {
+        throw new Error(`Username '${normalizedUsername}' is already taken`);
+      }
+    }
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      name: input.name !== undefined ? input.name.trim() : undefined,
+      username: normalizedUsername,
+      email: input.email !== undefined ? (input.email ? input.email.trim().toLowerCase() : null) : undefined,
+      role: targetRole,
+      ...(input.password && input.password.length >= 4 ? { password: hashPassword(input.password) } : {}),
+    },
+  });
+
+  // Also keep displayName synced in active sessions if user updates their own name
+  if (input.name && input.name.trim()) {
+    await prisma.sessionParticipant.updateMany({
+      where: { userId },
+      data: { displayName: input.name.trim() },
+    });
+  }
+
+  const { password: _, ...sanitized } = updated;
+  return sanitized;
+}
+
 export async function listUsers() {
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "desc" },
@@ -93,6 +164,10 @@ export async function listUsers() {
 }
 
 export async function deleteUser(userId: string, actorRole?: string) {
+  if (actorRole === "FACILITATOR") {
+    throw new Error("Forbidden: Facilitators cannot delete user accounts. Only Administrators can do this.");
+  }
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
   });
@@ -117,6 +192,9 @@ export interface BulkUploadResult {
 }
 
 export async function bulkUploadUsers(csvContent: string, actorRole?: string): Promise<BulkUploadResult> {
+  if (actorRole === "FACILITATOR") {
+    throw new Error("Forbidden: Facilitators cannot bulk upload or modify user accounts. Only Administrators can do this.");
+  }
   const lines = csvContent
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -219,7 +297,11 @@ export interface AssignUserToSessionInput {
   role?: string;
 }
 
-export async function assignUserToSession(input: AssignUserToSessionInput) {
+export async function assignUserToSession(
+  input: AssignUserToSessionInput,
+  actorRole?: string,
+  actorUserId?: string
+) {
   const { userId, sessionId, teamId, role = "PARTICIPANT" } = input;
 
   const user = await prisma.user.findUnique({
@@ -231,6 +313,18 @@ export async function assignUserToSession(input: AssignUserToSessionInput) {
     where: { id: sessionId },
   });
   if (!session) throw new Error("Session not found");
+
+  // Facilitators cannot assign sessions to other facilitators (only Admin and Super Admin can)
+  if (actorRole === "FACILITATOR") {
+    if (
+      (user.role === "FACILITATOR" || user.role === "ADMIN" || user.role === "SUPER_ADMIN") &&
+      user.id !== actorUserId
+    ) {
+      throw new Error(
+        "Forbidden: Facilitators cannot assign a session to another facilitator. Only Administrators can do this."
+      );
+    }
+  }
 
   return await prisma.$transaction(async (tx) => {
     // Check if participant already exists for this user in session

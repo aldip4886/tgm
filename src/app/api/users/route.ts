@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createUser, listUsers } from "@/services/user.service";
-import { verifyFacilitatorAuth } from "@/lib/auth";
+import { verifyFacilitatorAuth, verifyAdminAuth } from "@/lib/auth";
 import { z } from "zod";
 
 const createUserSchema = z.object({
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     let actorRole: string | undefined;
 
     if (authHeader || cookieToken || process.env.NODE_ENV !== "test") {
-      const payload = await verifyFacilitatorAuth(req);
+      const payload = await verifyAdminAuth(req);
       actorRole = payload.role;
     }
 

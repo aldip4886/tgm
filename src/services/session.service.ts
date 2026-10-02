@@ -40,14 +40,7 @@ export async function createSession(input: CreateSessionInput) {
       facilitator = await tx.user.findUnique({ where: { email: input.facilitatorEmail } });
     }
 
-    if (facilitator) {
-      facilitator = await tx.user.update({
-        where: { id: facilitator.id },
-        data: {
-          name: input.facilitatorName || facilitator.name,
-        },
-      });
-    } else {
+    if (!facilitator) {
       facilitator = await tx.user.create({
         data: {
           email: input.facilitatorEmail,
@@ -188,13 +181,87 @@ export async function getSession(sessionId: string) {
   return await prisma.session.findUnique({
     where: { id: sessionId },
     include: {
-      facilitator: true,
+      facilitator: {
+        select: {
+          id: true,
+          username: true,
+          name: true,
+          email: true,
+          role: true,
+        },
+      },
       participants: {
         orderBy: { joinedAt: "asc" },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              name: true,
+              email: true,
+              role: true,
+            },
+          },
+          team: true,
+          badges: {
+            include: {
+              badge: true,
+            },
+            orderBy: { createdAt: "desc" },
+          },
+          pointsReceived: {
+            include: {
+              giver: {
+                select: { id: true, displayName: true },
+              },
+            },
+            orderBy: { createdAt: "desc" },
+          },
+        },
       },
       teams: true,
       activities: {
         orderBy: { orderIndex: "asc" },
+        include: {
+          responses: {
+            include: {
+              participant: {
+                select: { id: true, displayName: true, role: true },
+              },
+              team: {
+                select: { id: true, name: true },
+              },
+              comments: {
+                include: {
+                  participant: {
+                    select: { id: true, displayName: true, role: true },
+                  },
+                },
+                orderBy: { createdAt: "asc" },
+              },
+              reactions: {
+                include: {
+                  participant: {
+                    select: { id: true, displayName: true },
+                  },
+                },
+              },
+              points: true,
+            },
+            orderBy: { createdAt: "desc" },
+          },
+          whiteboards: {
+            include: {
+              participant: {
+                select: { id: true, displayName: true },
+              },
+              team: {
+                select: { id: true, name: true },
+              },
+            },
+            orderBy: { updatedAt: "desc" },
+          },
+        },
       },
       presentationMappings: {
         orderBy: { slideNumber: "asc" },
@@ -217,12 +284,30 @@ export interface UpdateSessionInput {
   canvaPresentationUrl?: string | null;
   canvaSlideCount?: number | null;
   leaderboardVisibility?: "HIDDEN" | "LIVE" | "END_OF_ACTIVITY";
+  facilitatorId?: string;
 }
 
-export async function updateSession(sessionId: string, input: UpdateSessionInput) {
+export async function updateSession(
+  sessionId: string,
+  input: UpdateSessionInput,
+  actorRole?: string,
+  actorUserId?: string
+) {
   return await prisma.$transaction(async (tx) => {
     const existing = await tx.session.findUnique({ where: { id: sessionId } });
     if (!existing) throw new Error("Session not found");
+
+    if (input.facilitatorId && input.facilitatorId !== existing.facilitatorId) {
+      if (actorRole === "FACILITATOR") {
+        throw new Error(
+          "Forbidden: Facilitators cannot assign a session to another facilitator. Only Administrators can do this."
+        );
+      }
+      const targetFac = await tx.user.findUnique({ where: { id: input.facilitatorId } });
+      if (!targetFac) {
+        throw new Error("Target facilitator user not found");
+      }
+    }
 
     const updated = await tx.session.update({
       where: { id: sessionId },
@@ -233,6 +318,7 @@ export async function updateSession(sessionId: string, input: UpdateSessionInput
         canvaPresentationUrl: input.canvaPresentationUrl !== undefined ? input.canvaPresentationUrl : undefined,
         canvaSlideCount: input.canvaSlideCount !== undefined ? input.canvaSlideCount : undefined,
         leaderboardVisibility: input.leaderboardVisibility !== undefined ? input.leaderboardVisibility : undefined,
+        facilitatorId: input.facilitatorId !== undefined ? input.facilitatorId : undefined,
       },
       include: {
         facilitator: true,
@@ -249,6 +335,7 @@ export async function updateSession(sessionId: string, input: UpdateSessionInput
     await tx.event.create({
       data: {
         sessionId,
+        actorId: actorUserId,
         eventType: "SESSION_UPDATED",
         metadata: JSON.stringify(input),
       },

@@ -50,6 +50,30 @@ export async function linkPresentation(sessionId: string, input: LinkPresentatio
   });
 }
 
+export async function unlinkPresentation(sessionId: string) {
+  return await prisma.$transaction(async (tx) => {
+    const session = await tx.session.update({
+      where: { id: sessionId },
+      data: {
+        canvaPresentationUrl: null,
+        canvaSlideCount: 0,
+      },
+    });
+
+    await tx.event.create({
+      data: {
+        sessionId,
+        eventType: "PRESENTATION_DISCONNECTED",
+        metadata: JSON.stringify({
+          unlinkedAt: new Date().toISOString(),
+        }),
+      },
+    });
+
+    return session;
+  });
+}
+
 export interface CreateMappingInput {
   slideNumber: number;
   title: string;

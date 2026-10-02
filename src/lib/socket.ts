@@ -4,10 +4,35 @@ import { prisma } from "./db";
 
 const globalForSocket = globalThis as unknown as {
   io: SocketIOServer | undefined;
+  projectedCanvaBySession?: Record<
+    string,
+    {
+      isProjected: boolean;
+      canvaPresentationUrl: string;
+      chatEnabled?: boolean;
+      allowInteractiveNavigation?: boolean;
+      currentSlide?: number;
+    }
+  >;
+  timersBySession?: Record<
+    string,
+    {
+      activityId?: string;
+      timerStatus: string;
+      timerEndsAt?: string | null;
+      timerRemainingMs?: number;
+    }
+  >;
 };
 
 export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
   if (globalForSocket.io) return globalForSocket.io;
+  if (!globalForSocket.projectedCanvaBySession) {
+    globalForSocket.projectedCanvaBySession = {};
+  }
+  if (!globalForSocket.timersBySession) {
+    globalForSocket.timersBySession = {};
+  }
 
   const io = new SocketIOServer(httpServer, {
     cors: {
@@ -31,6 +56,16 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
           where: { id: participantId },
           data: { isConnected: true },
         }).catch(() => {});
+      }
+
+      const projectedCanva = globalForSocket.projectedCanvaBySession?.[sessionId];
+      if (projectedCanva && projectedCanva.isProjected && projectedCanva.canvaPresentationUrl) {
+        socket.emit("presentation:projected", projectedCanva);
+      }
+
+      const activeTimer = globalForSocket.timersBySession?.[sessionId];
+      if (activeTimer && activeTimer.timerStatus !== "STOPPED") {
+        socket.emit("timer:updated", activeTimer);
       }
 
       const participants = await prisma.sessionParticipant.findMany({
@@ -59,11 +94,92 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
     });
 
     socket.on("presentation:slide_change", ({ sessionId, slideNumber }: { sessionId: string; slideNumber: number }) => {
+      if (globalForSocket.projectedCanvaBySession?.[sessionId]) {
+        globalForSocket.projectedCanvaBySession[sessionId].currentSlide = slideNumber;
+        io.to(`session:${sessionId}`).emit("presentation:projected", {
+          ...globalForSocket.projectedCanvaBySession[sessionId],
+          currentSlide: slideNumber,
+        });
+      }
       io.to(`session:${sessionId}`).emit("presentation:slide_updated", { slideNumber });
     });
 
     socket.on("presentation:linked", ({ sessionId, canvaPresentationUrl, canvaSlideCount }: any) => {
+      if (!globalForSocket.projectedCanvaBySession) {
+        globalForSocket.projectedCanvaBySession = {};
+      }
+      if (!canvaPresentationUrl) {
+        delete globalForSocket.projectedCanvaBySession[sessionId];
+        io.to(`session:${sessionId}`).emit("presentation:projected", {
+          isProjected: false,
+          canvaPresentationUrl: "",
+          chatEnabled: false,
+          allowInteractiveNavigation: true,
+        });
+      } else if (globalForSocket.projectedCanvaBySession[sessionId]?.isProjected) {
+        globalForSocket.projectedCanvaBySession[sessionId] = {
+          ...globalForSocket.projectedCanvaBySession[sessionId],
+          isProjected: true,
+          canvaPresentationUrl,
+        };
+      }
       io.to(`session:${sessionId}`).emit("presentation:linked", { canvaPresentationUrl, canvaSlideCount });
+    });
+
+    socket.on(
+      "presentation:project",
+      ({
+        sessionId,
+        isProjected,
+        canvaPresentationUrl,
+        chatEnabled,
+        allowInteractiveNavigation,
+        currentSlide,
+      }: {
+        sessionId: string;
+        isProjected: boolean;
+        canvaPresentationUrl?: string;
+        chatEnabled?: boolean;
+        allowInteractiveNavigation?: boolean;
+        currentSlide?: number;
+      }) => {
+        if (!globalForSocket.projectedCanvaBySession) {
+          globalForSocket.projectedCanvaBySession = {};
+        }
+        const prev = globalForSocket.projectedCanvaBySession[sessionId];
+        const nextChatEnabled = chatEnabled !== undefined ? chatEnabled : (prev?.chatEnabled ?? true);
+        const nextAllowNav =
+          allowInteractiveNavigation !== undefined
+            ? allowInteractiveNavigation
+            : (prev?.allowInteractiveNavigation ?? true);
+        const nextSlide = currentSlide !== undefined ? currentSlide : (prev?.currentSlide || 1);
+
+        if (isProjected && canvaPresentationUrl) {
+          globalForSocket.projectedCanvaBySession[sessionId] = {
+            isProjected: true,
+            canvaPresentationUrl,
+            chatEnabled: nextChatEnabled,
+            allowInteractiveNavigation: nextAllowNav,
+            currentSlide: nextSlide,
+          };
+        } else {
+          delete globalForSocket.projectedCanvaBySession[sessionId];
+        }
+        io.to(`session:${sessionId}`).emit("presentation:projected", {
+          isProjected: Boolean(isProjected && canvaPresentationUrl),
+          canvaPresentationUrl: canvaPresentationUrl || "",
+          chatEnabled: nextChatEnabled,
+          allowInteractiveNavigation: nextAllowNav,
+          currentSlide: nextSlide,
+        });
+      }
+    );
+
+    socket.on("presentation:chat_message", ({ sessionId, message }: { sessionId: string; message?: any }) => {
+      io.to(`session:${sessionId}`).emit("presentation:chat_updated", {
+        message,
+        type: "NEW_MESSAGE",
+      });
     });
 
     socket.on("activity:change_state", ({ sessionId, activity }: { sessionId: string; activity: any }) => {
@@ -71,6 +187,19 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
     });
 
     socket.on("timer:sync", ({ sessionId, activityId, timerStatus, timerEndsAt, timerRemainingMs }: { sessionId: string; activityId: string; timerStatus: string; timerEndsAt?: string | null; timerRemainingMs?: number }) => {
+      if (!globalForSocket.timersBySession) {
+        globalForSocket.timersBySession = {};
+      }
+      if (timerStatus === "STOPPED") {
+        delete globalForSocket.timersBySession[sessionId];
+      } else {
+        globalForSocket.timersBySession[sessionId] = {
+          activityId,
+          timerStatus,
+          timerEndsAt,
+          timerRemainingMs,
+        };
+      }
       io.to(`session:${sessionId}`).emit("timer:updated", { activityId, timerStatus, timerEndsAt, timerRemainingMs });
     });
 
@@ -155,6 +284,7 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
         giverName,
       });
       io.to(`session:${sessionId}`).emit("leaderboard:scores_updated");
+      io.to(`session:${sessionId}`).emit("presentation:chat_updated", { type: "INTERACTION_UPDATED" });
     });
 
     socket.on("comment:add", ({ sessionId, notificationId, recipientId, commenterName, content, reason, responseId }: any) => {
@@ -166,6 +296,10 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
         reason: reason || content,
         responseId,
       });
+      io.to(`session:${sessionId}`).emit("presentation:chat_updated", {
+        type: "INTERACTION_UPDATED",
+        responseId,
+      });
     });
 
     socket.on("like:add", ({ sessionId, notificationId, recipientId, giverName, reason, responseId }: any) => {
@@ -174,6 +308,10 @@ export function initSocketServer(httpServer: HTTPServer): SocketIOServer {
         recipientId,
         giverName,
         reason,
+        responseId,
+      });
+      io.to(`session:${sessionId}`).emit("presentation:chat_updated", {
+        type: "INTERACTION_UPDATED",
         responseId,
       });
     });

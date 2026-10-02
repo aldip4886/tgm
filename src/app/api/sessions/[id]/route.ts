@@ -14,6 +14,7 @@ const updateSessionSchema = z.object({
   canvaPresentationUrl: z.string().nullable().optional(),
   canvaSlideCount: z.number().int().min(1).nullable().optional(),
   leaderboardVisibility: z.enum(["HIDDEN", "LIVE", "END_OF_ACTIVITY"]).optional(),
+  facilitatorId: z.string().optional(),
 });
 
 export async function GET(
@@ -53,11 +54,11 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    await verifyFacilitatorAuth(req, id);
+    const payload = await verifyFacilitatorAuth(req, id);
 
     const body = await req.json();
     const validated = updateSessionSchema.parse(body);
-    const updated = await updateSession(id, validated);
+    const updated = await updateSession(id, validated, payload.role, payload.userId);
 
     // Broadcast session update via Socket.IO if available
     try {
@@ -70,7 +71,7 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error: any) {
-    const status = error.status || 400;
+    const status = error.status || (error.message?.includes("Forbidden") ? 403 : 400);
     return NextResponse.json(
       { error: error.message || "Failed to update session" },
       { status }

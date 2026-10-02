@@ -5,7 +5,7 @@ import { Clock } from "lucide-react";
 
 interface DigitalTimerProps {
   endsAt?: string | null;
-  remainingMs?: number;
+  remainingMs?: number | null;
   status: "STOPPED" | "RUNNING" | "PAUSED" | string;
   onExpire?: () => void;
   size?: "sm" | "md" | "lg";
@@ -18,16 +18,17 @@ export function DigitalTimer({
   onExpire,
   size = "md",
 }: DigitalTimerProps) {
-  const [displayMs, setDisplayMs] = useState<number>(remainingMs);
+  const safeRemainingMs = remainingMs ?? 0;
+  const [displayMs, setDisplayMs] = useState<number>(safeRemainingMs);
 
   useEffect(() => {
     if (status === "PAUSED") {
-      setDisplayMs(remainingMs);
+      setDisplayMs(safeRemainingMs);
       return;
     }
 
     if (status !== "RUNNING" || !endsAt) {
-      setDisplayMs(remainingMs);
+      setDisplayMs(safeRemainingMs);
       return;
     }
 
